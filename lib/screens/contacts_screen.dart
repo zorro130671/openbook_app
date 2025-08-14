@@ -1,3 +1,4 @@
+// lib/screens/contacts_screen.dart
 import 'package:flutter/material.dart';
 import '../models/user_model.dart';
 
@@ -5,8 +6,28 @@ class ContactsScreen extends StatelessWidget {
   final List<UserModel> contacts;
   const ContactsScreen({super.key, required this.contacts});
 
-  ImageProvider<Object> _img(String url) =>
-      url.startsWith('assets/') ? AssetImage(url) : NetworkImage(url);
+  // ---- Avatar helpers -------------------------------------------------------
+
+  // Use the canonical bucket for REST download URLs (works on web & mobile)
+  static const String _bucket = 'open-book-16zt1k.appspot.com';
+
+  String _toDownloadUrl(String storagePath) {
+    final encoded = Uri.encodeComponent(storagePath);
+    return 'https://firebasestorage.googleapis.com/v0/b/$_bucket/o/$encoded?alt=media';
+  }
+
+  ImageProvider<Object>? _avatarProvider(String? raw) {
+    final v = (raw ?? '').trim();
+    if (v.isEmpty) return null; // let initials show
+    if (v.startsWith('assets/')) return AssetImage(v);
+    if (v.startsWith('http')) return NetworkImage(v);
+    // Otherwise assume it's a Firebase Storage path like "avatars/sumitra.png"
+    return NetworkImage(_toDownloadUrl(v));
+  }
+
+  String _initialOf(String s) => (s.isNotEmpty ? s[0] : '?').toUpperCase();
+
+  // --------------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
@@ -33,11 +54,20 @@ class ContactsScreen extends StatelessWidget {
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
+                      // CircleAvatar with initials fallback until the image loads
                       CircleAvatar(
                         radius: 24,
-                        backgroundImage: _img(u.avatarUrl),
+                        backgroundColor: Colors.grey[300],
+                        child: Text(
+                          _initialOf(u.displayName),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: Colors.black87,
+                          ),
+                        ),
+                        foregroundImage: _avatarProvider(u.avatarUrl),
                       ),
-                      // Online dot (no Positioned => use Align so we never trigger ParentData issues)
+                      // Online dot (use Align to avoid ParentData exceptions)
                       Align(
                         alignment: Alignment.bottomRight,
                         child: Container(
@@ -68,8 +98,7 @@ class ContactsScreen extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
                 trailing: Icon(Icons.message, color: cs.primary),
-                onTap: () =>
-                    Navigator.pop(context, u), // return selection if needed
+                onTap: () => Navigator.pop(context, u), // return selection
               ),
               const Divider(height: 0),
             ],

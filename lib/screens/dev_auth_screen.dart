@@ -1,4 +1,3 @@
-// lib/screens/dev_auth_screen.dart
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -17,7 +16,7 @@ class _DevAuthScreenState extends State<DevAuthScreen> {
   bool _obscure = true;
   bool _busy = false;
 
-  // ===== Avatar helpers (same approach as Home) =====
+  // ===== Avatar helpers =====
   static const String _bucket = 'open-book-16zt1k.firebasestorage.app';
 
   String _toAvatarUrl(String? value) {
@@ -50,18 +49,15 @@ class _DevAuthScreenState extends State<DevAuthScreen> {
 
     if (email.isEmpty || pw.isEmpty) {
       m.showSnackBar(
-        const SnackBar(content: Text('Email and password required.')),
-      );
+          const SnackBar(content: Text('Email and password required.')));
       return;
     }
 
     setState(() => _busy = true);
     try {
       await FirebaseAuth.instance.signOut();
-      await FirebaseAuth.instance.signInWithEmailAndPassword(
-        email: email,
-        password: pw,
-      );
+      await FirebaseAuth.instance
+          .signInWithEmailAndPassword(email: email, password: pw);
       m.showSnackBar(SnackBar(content: Text('Signed in as $email')));
       if (mounted) Navigator.pop(context, true); // tell caller to refresh
     } on FirebaseAuthException catch (e) {
@@ -81,7 +77,6 @@ class _DevAuthScreenState extends State<DevAuthScreen> {
       appBar: AppBar(title: const Text('Sign in (dev)')),
       body: Column(
         children: [
-          // --- Form ---
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: Column(
@@ -148,10 +143,7 @@ class _DevAuthScreenState extends State<DevAuthScreen> {
               ],
             ),
           ),
-
           const Divider(height: 0),
-
-          // --- Users from Firestore: tap to prefill email ---
           Expanded(
             child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
               stream: FirebaseFirestore.instance
@@ -174,60 +166,56 @@ class _DevAuthScreenState extends State<DevAuthScreen> {
                 return ListView.separated(
                   padding: const EdgeInsets.all(12),
                   itemCount: docs.length,
-                  separatorBuilder: (_, __) => const Divider(height: 0),
+                  separatorBuilder: (_, __) => Divider(
+                    height: 1, // Reduced height
+                    color: Colors.grey.shade300, // Lighter color
+                    thickness: 0.3, // Thinner divider
+                    indent: 60, // Start the line where the text starts
+                  ),
                   itemBuilder: (_, i) {
                     final m = docs[i].data();
                     final name = (m['displayName'] ?? '') as String;
                     final email = (m['email'] ?? '') as String;
-                    final avatarRaw =
-                        (m['avatarUrl'] ??
-                                m['avatarPath'] ??
-                                m['photoURL'] ??
-                                '')
-                            as String;
+                    final avatarRaw = (m['avatarUrl'] ??
+                        m['avatarPath'] ??
+                        m['photoURL'] ??
+                        '') as String;
                     final isOnline = (m['isOnline'] ?? false) as bool;
 
                     final img = _avatarProvider(avatarRaw);
-                    final initial = (name.isNotEmpty ? name[0] : '?')
-                        .toUpperCase();
+                    final initial =
+                        (name.isNotEmpty ? name[0] : '?').toUpperCase();
 
                     return ListTile(
                       contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 0,
-                        vertical: 4,
-                      ),
+                          horizontal: 0, vertical: 4),
                       leading: SizedBox(
                         width: 48,
                         height: 48,
                         child: Stack(
                           clipBehavior: Clip.none,
                           children: [
-                            // Avatar with initials fallback; photo overlays when available
                             CircleAvatar(
                               radius: 24,
-                              backgroundColor: Colors.grey[700],
+                              backgroundColor: Colors.grey[300],
                               child: Text(
                                 initial,
                                 style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.w700,
-                                ),
+                                    fontWeight: FontWeight.w700,
+                                    color: Colors.black87),
                               ),
-                              foregroundImage: img, // may be null
+                              foregroundImage: img,
                             ),
-                            // Online dot
                             Align(
                               alignment: Alignment.bottomRight,
                               child: Container(
-                                width: 12,
-                                height: 12,
+                                width: 6,
+                                height: 6,
                                 decoration: BoxDecoration(
-                                  color: isOnline ? Colors.green : Colors.grey,
+                                  color: (isOnline == true)
+                                      ? Colors.greenAccent.shade400
+                                      : Colors.red,
                                   shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: Colors.white,
-                                    width: 2,
-                                  ),
                                 ),
                               ),
                             ),

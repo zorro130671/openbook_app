@@ -1,58 +1,230 @@
-// ============================================================
-// BLOCK A: IMPORTS & MAIN CLASS - START
-// ============================================================
+// lib/screens/chat_screen.dart
 import 'dart:async';
+import 'dart:ui' show ImageFilter; // background blur
+import 'package:flutter/foundation.dart'; // debugPrint
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // <- for SystemSound
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
 
-import '../models/user_model.dart'; // <- your existing model
+import '../data/emojis.dart';
+import '../models/user_model.dart';
+import '../services/giphy_service.dart';
 
 class ChatScreen extends StatefulWidget {
-  final String chatId;
-  final bool isGroupChat;
-  final String avatarUrl; // asset/http(s)/storage path (same as before)
-  final String chatName; // shown in AppBar
   final UserModel currentUser;
+  final String chatId;
+  final String chatName;
+  final bool isGroupChat;
+  final String avatarUrl; // asset path, http(s), gs://, or storage path
 
   const ChatScreen({
     Key? key,
+    required this.currentUser,
     required this.chatId,
+    required this.chatName,
     required this.isGroupChat,
     required this.avatarUrl,
-    required this.chatName,
-    required this.currentUser,
   }) : super(key: key);
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
 }
-// ============================================================
-// BLOCK A: IMPORTS & MAIN CLASS - END
-// ============================================================
 
-// ============================================================
-// BLOCK B: STATE, CONFIG, HELPERS - START
-//  - TEST/LIVE switch persisted to SharedPreferences
-//  - Avatar prefetch logic (group + DM)
-//  - Firestore helpers kept compatible with your existing schema
-// ============================================================
-class _ChatScreenState extends State<ChatScreen> {
-  // --- Config ---
+class _ChatScreenState extends State<ChatScreen> with TickerProviderStateMixin {
+  // ===== Config =====
   static const String _bucket = 'open-book-16zt1k.firebasestorage.app';
-  static const String _prefsKeyTestMode = 'test_mode_enabled';
 
-  // --- Controllers / state ---
-  final _messageCtrl = TextEditingController();
+  // Your working GIPHY key (hardcoded for now)
+  static const String _giphyApiKey = 'PWbm4iUct0JdyUoHpno2IqmWB9dng4zv';
+
+  // Pets folder (dynamic)
+  static const String _petsStoragePath = 'stickers/pets/pack1';
+
+  // Wallpaper quick-picks (upload these exact names)
+  static const List<String> _presetWallpapers = [
+    'wallpapers/aurora_neon.jpg',
+    'wallpapers/nebula_purple.jpg',
+    'wallpapers/dark_mesh.png',
+    'wallpapers/city_bokeh_night.jpg',
+    'wallpapers/paper_dark.jpg',
+  ];
+
+  // Local fallback GIFs in Storage (exact names you gave me)
+  static const List<String> _localGifPaths = [
+    'wallpapers/gifs/taylor_swift_loop.gif',
+    'wallpapers/gifs/blackpink_loop72.gif',
+  ];
+
+  // 👉 Emoji categories (add this right below)
+  static const Map<String, List<String>> _emojiBuckets = {
+    'Happy': [
+      '😀',
+      '😃',
+      '😄',
+      '😁',
+      '😆',
+      '😊',
+      '🙂',
+      '😉',
+      '😎',
+      '🤩',
+      '🥳',
+      '😺',
+      '😸',
+      '😹',
+    ],
+    'Sad': [
+      '😕',
+      '🙁',
+      '☹️',
+      '😞',
+      '😟',
+      '😢',
+      '😭',
+      '😫',
+      '😩',
+      '🥺',
+      '😔',
+      '😿',
+    ],
+    'Love': [
+      '❤️',
+      '💕',
+      '💖',
+      '😍',
+      '😘',
+      '😗',
+      '😙',
+      '😚',
+      '🥰',
+      '💓',
+      '💞',
+      '💟',
+      '💜',
+      '💙',
+      '💚',
+      '💛',
+      '🧡',
+    ],
+    'Angry': ['😠', '😡', '🤬', '😤', '😒', '😑', '🙄'],
+    'Party': ['🎉', '🥳', '🎊', '🎈', '🎆', '🎇', '🪅', '🎂', '🥂', '🍾'],
+    'Animals': [
+      '🐶',
+      '🐱',
+      '🐭',
+      '🐹',
+      '🐰',
+      '🐻',
+      '🐼',
+      '🐨',
+      '🐯',
+      '🦁',
+      '🐷',
+      '🐸',
+      '🐵',
+      '🦊',
+      '🦝',
+      '🐮',
+      '🐔',
+      '🐧',
+      '🐦',
+      '🐤',
+      '🐣',
+      '🐥',
+    ],
+    'Hands': [
+      '👍',
+      '👎',
+      '👏',
+      '🙌',
+      '🤝',
+      '✌️',
+      '🤞',
+      '🤟',
+      '🤘',
+      '👌',
+      '🤏',
+      '✋',
+      '🤚',
+      '🖐️',
+      '🫶',
+      '🤲',
+      '🫱',
+      '🫲',
+      '👉',
+      '👈',
+      '👆',
+      '👇',
+      '☝️',
+      '👊',
+      '🤜',
+      '🤛',
+    ],
+    'Food': [
+      '🍎',
+      '🍌',
+      '🍇',
+      '🍓',
+      '🥑',
+      '🍔',
+      '🍟',
+      '🍕',
+      '🌮',
+      '🌯',
+      '🍣',
+      '🍱',
+      '🍜',
+      '🍝',
+      '🍰',
+      '🍩',
+      '☕',
+      '🍺',
+      '🍷',
+      '🥤',
+    ],
+  };
+
+  late final List<String> _localGifUrls = _localGifPaths
+      .map(
+        (p) =>
+            'https://firebasestorage.googleapis.com/v0/b/$_bucket/o/${Uri.encodeComponent(p)}?alt=media',
+      )
+      .toList();
+
+  // ===== Controllers / state =====
+  final _textCtrl = TextEditingController();
+  final _panelSearchCtrl = TextEditingController();
+  final _focus = FocusNode();
   final _listCtrl = ScrollController();
 
-  bool _testMode = true; // default dev-fast; persisted below
-  String? _avatarRaw; // may be resolved from Firestore
-  String? _otherUid; // for DM avatar fetch
-  List<String> _participants = const [];
+  // Emoji category filter
+  String _emojiFilter = 'All';
 
-  // Cached messages stream (compatible with your existing collection)
+  int _lastMsgCount = 0;
+  List<String> _participants = const [];
+  String? _otherUid;
+  String? _avatarRaw; // may be resolved from Firestore
+
+  // Composer panel
+  bool _showPanel = false;
+  late final TabController _panelTabs = TabController(length: 4, vsync: this);
+  Timer? _panelDebounce;
+  bool _loadingRemote = false;
+  List<GiphyItem> _remoteItems = const [];
+  late final GiphyService _giphy = GiphyService(_giphyApiKey);
+
+  // Pets
+  final List<String> _petUrls = [];
+  bool _petsLoading = true;
+  String? _petsError;
+
+  // Background
+  String? _bgRaw; // 'color:#RRGGBB' or asset/http(s)/storage path
+  double _bgDim = 0.15;
+  double _bgBlur = 0.0;
+
+  // Messages stream (cached)
   late final Stream<QuerySnapshot<Map<String, dynamic>>> _messagesStream =
       FirebaseFirestore.instance
           .collection('chats')
@@ -65,35 +237,42 @@ class _ChatScreenState extends State<ChatScreen> {
   void initState() {
     super.initState();
     _avatarRaw = widget.avatarUrl.trim().isNotEmpty ? widget.avatarUrl : null;
-    _restoreTestMode();
     _loadParticipants();
     _zeroMyUnreadOnOpen();
-    _prefetchAvatarForAppBar();
+    _loadPets();
+
+    _focus.addListener(() {
+      if (_focus.hasFocus && _showPanel) {
+        setState(() => _showPanel = false);
+      }
+    });
+
+    _panelTabs.addListener(() {
+      if (_panelTabs.indexIsChanging) return;
+      _kickSearch();
+    });
+
+    _panelSearchCtrl.addListener(() {
+      _panelDebounce?.cancel();
+      _panelDebounce = Timer(const Duration(milliseconds: 300), _kickSearch);
+    });
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => _kickSearch());
   }
 
   @override
   void dispose() {
-    _messageCtrl.dispose();
+    _panelDebounce?.cancel();
+    _panelSearchCtrl.dispose();
+    _panelTabs.dispose();
+    _textCtrl.dispose();
+    _focus.dispose();
     _listCtrl.dispose();
     super.dispose();
   }
 
-  // --- SharedPreferences: restore/persist test mode ---
-  Future<void> _restoreTestMode() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() => _testMode = prefs.getBool(_prefsKeyTestMode) ?? true);
-  }
+  // ===== Helpers =====
 
-  Future<void> _setTestMode(bool v) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_prefsKeyTestMode, v);
-    setState(() => _testMode = v);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Mode switched to ${v ? 'TEST' : 'LIVE'}')),
-    );
-  }
-
-  // --- URL helpers / avatar provider ---
   String _toPublicUrl(String value) {
     final v = value.trim();
     if (v.startsWith('http')) return v;
@@ -110,7 +289,61 @@ class _ChatScreenState extends State<ChatScreen> {
     return NetworkImage(url);
   }
 
-  // --- Firestore helpers ---
+  ImageProvider<Object>? _bgImageProviderFrom(String? raw) {
+    final v = (raw ?? '').trim();
+    if (v.isEmpty) return null;
+    if (v.startsWith('color:')) return null;
+    if (v.startsWith('assets/')) return AssetImage(v);
+    final url = v.startsWith('http') ? v : _toPublicUrl(v);
+    return NetworkImage(url);
+  }
+
+  Color? _parseBgColor(String? raw) {
+    final v = (raw ?? '').trim().toLowerCase();
+    if (!v.startsWith('color:')) return null;
+    final hex = v.substring(6);
+    if (hex.startsWith('#')) {
+      final clean = hex.substring(1);
+      final full = clean.length == 6 ? 'FF$clean' : clean;
+      return Color(int.parse(full, radix: 16));
+    }
+    if (hex.startsWith('0x')) {
+      return Color(int.parse(hex));
+    }
+    return null;
+  }
+
+  bool _isGif(String? src) {
+    final s = (src ?? '').toLowerCase();
+    return s.endsWith('.gif') ||
+        s.contains('giphy.com/media') ||
+        s.contains('.gif?');
+  }
+
+  void _applyBackground(String src) {
+    final isGif = _isGif(src);
+    setState(() {
+      _bgRaw = src;
+      if (isGif) {
+        _bgDim = 0.35;
+        _bgBlur = 8.0;
+      } else {
+        _bgBlur = 0.0;
+        _bgDim = _bgDim.clamp(0.0, 0.6);
+      }
+    });
+  }
+
+  String _dateHeaderFor(DateTime dt) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = today.subtract(const Duration(days: 1));
+    final d = DateTime(dt.year, dt.month, dt.day);
+    if (d == today) return 'Today';
+    if (d == yesterday) return 'Yesterday';
+    return '${dt.day}/${dt.month}/${dt.year}';
+  }
+
   String? _firstNonEmpty(Map<String, dynamic>? map, List<String> keys) {
     if (map == null) return null;
     for (final k in keys) {
@@ -125,16 +358,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
     try {
       if (widget.isGroupChat) {
-        // group: read from chats/{chatId}
         final c = (await FirebaseFirestore.instance
                 .collection('chats')
                 .doc(widget.chatId)
                 .get())
             .data();
         final raw = _firstNonEmpty(c, ['imageUrl', 'avatarUrl', 'icon']);
-        if (raw != null && mounted) setState(() => _avatarRaw = raw);
+        if (raw != null) setState(() => _avatarRaw = raw);
       } else {
-        // DM: find the other participant
         String? other = _otherUid;
         if (other == null && widget.chatId.startsWith('dm_')) {
           final bits = widget.chatId.substring(3).split('_');
@@ -162,63 +393,95 @@ class _ChatScreenState extends State<ChatScreen> {
             'imageUrl',
             'profilePic',
           ]);
-          if (raw != null && mounted) setState(() => _avatarRaw = raw);
+          if (raw != null) setState(() => _avatarRaw = raw);
         }
       }
     } catch (e) {
-      // non-fatal
+      debugPrint('prefetch avatar error: $e');
     }
   }
 
   Future<void> _loadParticipants() async {
-    try {
-      final snap = await FirebaseFirestore.instance
-          .collection('chats')
-          .doc(widget.chatId)
-          .get();
-      final data = snap.data();
-      if (data != null && data['participants'] is List) {
-        _participants = List<String>.from(data['participants'] as List);
-        // set _otherUid hint for DMs
-        if (_participants.length == 2) {
-          final me = widget.currentUser.uid;
-          final others = _participants.where((u) => u != me).toList();
-          if (others.isNotEmpty) _otherUid = others.first;
-        }
-      } else if (widget.chatId.startsWith('dm_')) {
-        final bits = widget.chatId.substring(3).split('_');
-        if (bits.length == 2) {
-          _participants = [bits[0], bits[1]];
-          final me = widget.currentUser.uid;
-          final others = _participants.where((u) => u != me).toList();
-          if (others.isNotEmpty) _otherUid = others.first;
-        }
+    final snap = await FirebaseFirestore.instance
+        .collection('chats')
+        .doc(widget.chatId)
+        .get();
+    final data = snap.data();
+    if (data != null && data['participants'] is List) {
+      _participants = List<String>.from(data['participants'] as List);
+      final me = widget.currentUser.uid;
+      if (_participants.length == 2) {
+        final others = _participants.where((u) => u != me).toList();
+        if (others.isNotEmpty) _otherUid = others.first;
       }
-    } catch (_) {}
+      setState(() {});
+    } else if (widget.chatId.startsWith('dm_')) {
+      final bits = widget.chatId.substring(3).split('_');
+      if (bits.length == 2) {
+        _participants = [bits[0], bits[1]];
+        final me = widget.currentUser.uid;
+        final others = _participants.where((u) => u != me).toList();
+        if (others.isNotEmpty) _otherUid = others.first;
+        setState(() {});
+      }
+    }
     await _prefetchAvatarForAppBar();
-    if (mounted) setState(() {});
   }
 
   Future<void> _zeroMyUnreadOnOpen() async {
     final my = widget.currentUser.uid;
-    try {
-      await FirebaseFirestore.instance
-          .collection('chats')
-          .doc(widget.chatId)
-          .set({
+    await FirebaseFirestore.instance.collection('chats').doc(widget.chatId).set(
+      {
         'unreadCount': {my: 0},
         'unread': {my: 0},
-      }, SetOptions(merge: true));
-    } catch (_) {}
+      },
+      SetOptions(merge: true),
+    );
   }
-  // ============================================================
-  // BLOCK B: STATE, CONFIG, HELPERS - END
-  // ============================================================
 
-  // ============================================================
-  // BLOCK C: SENDING & AUTO-SCROLL - START
-  //  - Matches your existing schema updates (lastMessage, unread maps)
-  // ============================================================
+  // ===== Pets =====
+  bool _isImageFile(String name) {
+    final n = name.toLowerCase();
+    if (n.startsWith('.')) return false;
+    return n.endsWith('.png') ||
+        n.endsWith('.jpg') ||
+        n.endsWith('.jpeg') ||
+        n.endsWith('.webp') ||
+        n.endsWith('.gif');
+  }
+
+  Future<void> _loadPets() async {
+    setState(() {
+      _petsLoading = true;
+      _petsError = null;
+      _petUrls.clear();
+    });
+    try {
+      final baseRef = FirebaseStorage.instance.ref(_petsStoragePath);
+      final all = await baseRef.listAll();
+      final items = <Reference>[];
+      items.addAll(all.items.where((i) => _isImageFile(i.name)));
+      for (final p in all.prefixes) {
+        final sub = await p.listAll();
+        items.addAll(sub.items.where((i) => _isImageFile(i.name)));
+      }
+      final urls = await Future.wait(items.map((i) => i.getDownloadURL()));
+      urls.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+      if (!mounted) return;
+      setState(() {
+        _petUrls.addAll(urls);
+        _petsLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _petsError = e.toString();
+        _petsLoading = false;
+      });
+    }
+  }
+
+  // ===== Sending =====
   Future<void> _sendText(String text) async {
     final t = text.trim();
     if (t.isEmpty) return;
@@ -227,7 +490,6 @@ class _ChatScreenState extends State<ChatScreen> {
     final chatRef =
         FirebaseFirestore.instance.collection('chats').doc(widget.chatId);
 
-    // Add message
     await chatRef.collection('messages').add({
       'senderId': senderId,
       'senderName': widget.currentUser.displayName,
@@ -236,7 +498,6 @@ class _ChatScreenState extends State<ChatScreen> {
       'timestamp': FieldValue.serverTimestamp(),
     });
 
-    // Participants (for unread counters)
     List<String> parts = _participants;
     if (parts.isEmpty) {
       final chatSnap = await chatRef.get();
@@ -249,7 +510,6 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     }
 
-    // Update chat metadata + unread counters
     final updates = <String, dynamic>{
       'lastMessage': t,
       'lastMessageTimestamp': FieldValue.serverTimestamp(),
@@ -265,7 +525,92 @@ class _ChatScreenState extends State<ChatScreen> {
       await chatRef.set(updates, SetOptions(merge: true));
     }
 
-    _messageCtrl.clear();
+    _textCtrl.clear();
+    _maybeAutoscrollAfterSend();
+  }
+
+  Future<void> _sendMedia(GiphyItem item) async {
+    final senderId = widget.currentUser.uid;
+    final chatRef =
+        FirebaseFirestore.instance.collection('chats').doc(widget.chatId);
+
+    final kind = item.isSticker ? 'sticker' : 'gif';
+    final preview = item.previewUrl.isNotEmpty ? item.previewUrl : item.url;
+    final label = item.isSticker ? 'Sticker' : 'GIF';
+
+    await chatRef.collection('messages').add({
+      'senderId': senderId,
+      'senderName': widget.currentUser.displayName,
+      'text': '',
+      'type': kind,
+      'mediaUrl': item.url,
+      'previewUrl': preview,
+      'w': item.width,
+      'h': item.height,
+      'timestamp': FieldValue.serverTimestamp(),
+    });
+
+    List<String> parts = _participants;
+    if (parts.isEmpty) {
+      final chatSnap = await chatRef.get();
+      final data = chatSnap.data();
+      if (data != null && data['participants'] is List) {
+        parts = List<String>.from(data['participants'] as List);
+      }
+    }
+    final updates = <String, dynamic>{
+      'lastMessage': '📎 $label',
+      'lastMessageTimestamp': FieldValue.serverTimestamp(),
+    };
+    for (final uid in parts) {
+      if (uid == senderId) continue;
+      updates['unreadCount.$uid'] = FieldValue.increment(1);
+      updates['unread.$uid'] = FieldValue.increment(1);
+    }
+    try {
+      await chatRef.update(updates);
+    } catch (_) {
+      await chatRef.set(updates, SetOptions(merge: true));
+    }
+
+    _maybeAutoscrollAfterSend();
+  }
+
+  Future<void> _sendStickerUrl(String url) async {
+    final senderId = widget.currentUser.uid;
+    final chatRef =
+        FirebaseFirestore.instance.collection('chats').doc(widget.chatId);
+
+    await chatRef.collection('messages').add({
+      'senderId': senderId,
+      'senderName': widget.currentUser.displayName,
+      'type': 'sticker',
+      'mediaUrl': url,
+      'previewUrl': url,
+      'w': 256,
+      'h': 256,
+      'timestamp': FieldValue.serverTimestamp(),
+    });
+
+    List<String> parts = _participants;
+    if (parts.isEmpty) {
+      final chatSnap = await chatRef.get();
+      final data = chatSnap.data();
+      if (data != null && data['participants'] is List) {
+        parts = List<String>.from(data['participants'] as List);
+      }
+    }
+    final updates = <String, dynamic>{
+      'lastMessage': '📎 Sticker',
+      'lastMessageTimestamp': FieldValue.serverTimestamp(),
+    };
+    for (final uid in parts) {
+      if (uid == senderId) continue;
+      updates['unreadCount.$uid'] = FieldValue.increment(1);
+      updates['unread.$uid'] = FieldValue.increment(1);
+    }
+    await chatRef.set(updates, SetOptions(merge: true));
+
     _maybeAutoscrollAfterSend();
   }
 
@@ -283,395 +628,113 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
   }
-  // ============================================================
-  // BLOCK C: SENDING & AUTO-SCROLL - END
-  // ============================================================
 
-// ============================================================
-// BLOCK D: APP BAR (with TEST/LIVE Switch) - START
-// ============================================================
+  void _scrollToBottomIfNeeded(int newCount) {
+    if (newCount == _lastMsgCount) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_listCtrl.hasClients) return;
+      final pos = _listCtrl.position;
+      final nearBottom = (pos.maxScrollExtent - pos.pixels) < 120;
+      if (nearBottom) {
+        _listCtrl.animateTo(
+          pos.maxScrollExtent + 80,
+          duration: const Duration(milliseconds: 220),
+          curve: Curves.easeOut,
+        );
+      }
+      _lastMsgCount = newCount;
+    });
+  }
+
+  // ===== AppBar =====
   PreferredSizeWidget _buildAppBar(BuildContext context) {
     final img = _avatarProvider(
       (_avatarRaw ?? '').trim().isNotEmpty ? _avatarRaw : widget.avatarUrl,
     );
-
-    final title = widget.chatName.isNotEmpty
-        ? widget.chatName
-        : (widget.isGroupChat ? 'Group Chat' : 'Direct Chat');
-
-    final String statusText =
-        'Having an awesome holiday'; // Replace with real status if dynamic
+    final initial =
+        (widget.chatName.isNotEmpty ? widget.chatName[0] : '?').toUpperCase();
 
     return AppBar(
-      automaticallyImplyLeading: false,
+      leadingWidth: 56,
+      leading: IconButton(
+        icon: const Icon(Icons.arrow_back),
+        onPressed: () => Navigator.pop(context),
+      ),
       titleSpacing: 0,
       title: Row(
         children: [
-          // Back arrow
-          IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: () => Navigator.pop(context),
+          CircleAvatar(
+            radius: 18,
+            backgroundColor: Colors.grey[700],
+            foregroundImage: img,
+            child: img == null
+                ? Text(
+                    initial,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  )
+                : null,
           ),
-          // Avatar with green dot
-          Stack(
-            children: [
-              CircleAvatar(
-                radius: 20,
-                backgroundColor: Colors.grey[700],
-                foregroundImage: img,
-                child: img == null
-                    ? Text(
-                        title.isNotEmpty ? title[0].toUpperCase() : '?',
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      )
-                    : null,
-              ),
-              const Positioned(
-                bottom: 0,
-                right: 0,
-                child: _OnlineDot(),
-              ),
-            ],
-          ),
-          const SizedBox(width: 12),
-          // Name + Status stacked (nudged down)
+          const SizedBox(width: 8),
           Expanded(
-            child: Padding(
-              padding: const EdgeInsets.only(top: 6),
+            child: GestureDetector(
+              onTap: () {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Open Stories (coming soon)')),
+                );
+              },
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 0),
-                  Text(
-                    statusText,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: Colors.white70,
-                    ),
-                  ),
-                ],
+                children: const [SizedBox(height: 2)],
               ),
             ),
           ),
         ],
       ),
       actions: [
-        // Cooler phone icon
         IconButton(
-          tooltip: 'Voice call',
-          icon: const Icon(Icons.call_rounded),
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => const _FeaturePlaceholder(title: 'Voice Call'),
-              ),
-            );
-          },
+          tooltip: 'Wallpaper',
+          icon: const Icon(Icons.wallpaper_outlined),
+          onPressed: _openBackgroundSheet,
         ),
-        // Cooler video icon
-        IconButton(
-          tooltip: 'Video call',
-          icon: const Icon(Icons.videocam_rounded),
-          onPressed: () {
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (_) => const _FeaturePlaceholder(title: 'Video Call'),
-              ),
-            );
-          },
-        ),
-        // TEST/LIVE pill + toggle
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 10.0),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(
-              color:
-                  _testMode ? Colors.green.shade600 : Colors.blueGrey.shade600,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Text(
-              _testMode ? 'TEST' : 'LIVE',
-              style: const TextStyle(fontSize: 11, color: Colors.white),
+        const _TopAction(icon: Icons.phone_outlined, tooltip: 'Voice call'),
+        const _TopAction(icon: Icons.videocam_outlined, tooltip: 'Video call'),
+        const SizedBox(width: 4),
+      ],
+      bottom: PreferredSize(
+        preferredSize: const Size.fromHeight(20),
+        child: Padding(
+          padding: const EdgeInsets.only(left: 56, bottom: 6, right: 12),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: const [
+                _OnlineDot(),
+                SizedBox(width: 4),
+                Flexible(
+                  child: Text(
+                    'Having an awesome holiday',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 11, color: Colors.white70),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
-        IconButton(
-          tooltip: 'Toggle Test/Live',
-          icon: const Icon(Icons.swap_horiz),
-          onPressed: () => _setTestMode(!_testMode),
-        ),
-        const SizedBox(width: 6),
-      ],
+      ),
     );
   }
-// ============================================================
-// BLOCK D: APP BAR (with TEST/LIVE Switch) - END
-// ============================================================
 
-// ============================================================
-// BLOCK E: MESSAGE LIST (animated + actions) - START
-// ============================================================
+  // ===== Messages list =====
   Widget _buildMessageList() {
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: _messagesStream,
       builder: (context, snap) {
-        // ---- local helpers ----
-        String fmtTime(DateTime dt) {
-          final h = dt.hour.toString().padLeft(2, '0');
-          final m = dt.minute.toString().padLeft(2, '0');
-          return '$h:$m';
-        }
-
-        String dateHeaderFor(DateTime dt) {
-          final now = DateTime.now();
-          final today = DateTime(now.year, now.month, now.day);
-          final yesterday = today.subtract(const Duration(days: 1));
-          final d = DateTime(dt.year, dt.month, dt.day);
-          if (d == today) return 'Today';
-          if (d == yesterday) return 'Yesterday';
-          return '${dt.day}/${dt.month}/${dt.year}';
-        }
-
-        Widget buildTicks(Map<String, dynamic> m) {
-          final status = (m['status'] ?? 'sent').toString();
-          Widget icon;
-          switch (status) {
-            case 'read':
-              icon = const Icon(Icons.done_all,
-                  size: 14, color: Colors.blueAccent);
-              break;
-            case 'delivered':
-              icon = Icon(
-                Icons.done_all,
-                size: 14,
-                color: Theme.of(context).brightness == Brightness.dark
-                    ? Colors.white70
-                    : Colors.black54,
-              );
-              break;
-            default:
-              icon = Icon(
-                Icons.check,
-                size: 14,
-                color: Theme.of(context).brightness == Brightness.dark
-                    ? Colors.white70
-                    : Colors.black54,
-              );
-          }
-          return AnimatedSwitcher(
-            duration: const Duration(milliseconds: 180),
-            transitionBuilder: (child, anim) =>
-                FadeTransition(opacity: anim, child: child),
-            child: KeyedSubtree(key: ValueKey(status), child: icon),
-          );
-        }
-
-        // WhatsApp-style text bubble with inline time + ticks
-        Widget buildBubble(
-          String type,
-          bool me,
-          String text,
-          Map<String, dynamic> m,
-          DateTime ts,
-        ) {
-          if (type == 'gif' || type == 'sticker') {
-            final url = (m['previewUrl'] ?? m['mediaUrl'] ?? '').toString();
-            final w = (m['w'] as num?)?.toDouble() ?? 200;
-            final h = (m['h'] as num?)?.toDouble() ?? 200;
-            final maxW = MediaQuery.of(context).size.width * .66;
-            final scale = (w > 0) ? (maxW / w).clamp(0.4, 1.0) : 1.0;
-            final dw = (w * scale).toDouble();
-            final dh = (h * scale).toDouble();
-
-            return ClipRRect(
-              borderRadius: BorderRadius.only(
-                topLeft: const Radius.circular(12),
-                topRight: const Radius.circular(12),
-                bottomLeft: Radius.circular(me ? 12 : 2),
-                bottomRight: Radius.circular(me ? 2 : 12),
-              ),
-              child:
-                  Image.network(url, width: dw, height: dh, fit: BoxFit.cover),
-            );
-          }
-
-          return Container(
-            padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
-            decoration: BoxDecoration(
-              color: me ? Colors.blue : Colors.grey[800],
-              borderRadius: BorderRadius.only(
-                topLeft: const Radius.circular(12),
-                topRight: const Radius.circular(12),
-                bottomLeft: Radius.circular(me ? 12 : 2),
-                bottomRight: Radius.circular(me ? 2 : 12),
-              ),
-            ),
-            constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * .78,
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment:
-                  CrossAxisAlignment.end, // slightly lower than text
-              children: [
-                Flexible(
-                  child: Text(
-                    text,
-                    style: const TextStyle(
-                        fontSize: 15, color: Colors.white, height: 1.22),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                Text(
-                  fmtTime(ts),
-                  style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.white.withOpacity(0.7),
-                    height: 1.1,
-                    shadows: [
-                      Shadow(
-                        offset: const Offset(0, 0),
-                        blurRadius: 3,
-                        color: Colors.black.withOpacity(0.35),
-                      ),
-                    ],
-                  ),
-                ),
-                if (me) ...[
-                  const SizedBox(width: 3),
-                  buildTicks(m),
-                ],
-              ],
-            ),
-          );
-        }
-
-        Future<void> showBottomSheetMenu({
-          required bool me,
-          required DocumentReference<Map<String, dynamic>> ref,
-          required String text,
-          required Map<String, dynamic> m,
-          required DateTime ts,
-        }) async {
-          await showModalBottomSheet(
-            context: context,
-            showDragHandle: true,
-            backgroundColor: Theme.of(context).colorScheme.surface,
-            builder: (ctx) {
-              return SafeArea(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ListTile(
-                      leading: const Icon(Icons.reply_outlined),
-                      title: const Text('Reply'),
-                      onTap: () {
-                        Navigator.pop(ctx);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Reply coming soon')),
-                        );
-                      },
-                    ),
-                    if (text.trim().isNotEmpty)
-                      ListTile(
-                        leading: const Icon(Icons.copy),
-                        title: const Text('Copy'),
-                        onTap: () async {
-                          await Clipboard.setData(ClipboardData(text: text));
-                          Navigator.pop(ctx);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Copied')),
-                          );
-                        },
-                      ),
-                    if (me)
-                      ListTile(
-                        leading: const Icon(Icons.delete_outline),
-                        title: const Text('Delete for me'),
-                        onTap: () async {
-                          Navigator.pop(ctx);
-                          try {
-                            await ref.delete();
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Message deleted')),
-                            );
-                          } catch (_) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Delete failed')),
-                            );
-                          }
-                        },
-                      ),
-                  ],
-                ),
-              );
-            },
-          );
-        }
-
-        Future<void> showPointerMenu(
-          Offset pos, {
-          required bool me,
-          required DocumentReference<Map<String, dynamic>> ref,
-          required String text,
-          required Map<String, dynamic> m,
-          required DateTime ts,
-        }) async {
-          await showMenu(
-            context: context,
-            position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
-            items: [
-              const PopupMenuItem(value: 'reply', child: Text('Reply')),
-              if (text.trim().isNotEmpty)
-                const PopupMenuItem(value: 'copy', child: Text('Copy')),
-              if (me)
-                const PopupMenuItem(
-                    value: 'delete', child: Text('Delete for me')),
-            ],
-          ).then((value) async {
-            if (value == 'reply') {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Reply coming soon')),
-              );
-            } else if (value == 'copy') {
-              await Clipboard.setData(ClipboardData(text: text));
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Copied')),
-              );
-            } else if (value == 'delete') {
-              try {
-                await ref.delete();
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Message deleted')),
-                );
-              } catch (_) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Delete failed')),
-                );
-              }
-            }
-          });
-        }
-        // ---- end helpers ----
-
         if (snap.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator(strokeWidth: 2));
         }
@@ -680,221 +743,599 @@ class _ChatScreenState extends State<ChatScreen> {
           return const Center(child: Text('No messages yet'));
         }
 
+        _scrollToBottomIfNeeded(docs.length);
         DateTime? lastDate;
-        return ListView.builder(
-          controller: _listCtrl,
-          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-          itemCount: docs.length,
-          itemBuilder: (context, i) {
-            final doc = docs[i];
-            final m = doc.data();
-            final me = m['senderId'] == widget.currentUser.uid;
-            final ts =
-                (m['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
-            final type = (m['type'] ?? 'text').toString();
-            final text = (m['text'] ?? '').toString();
 
-            // Day header
-            final currentDate = DateTime(ts.year, ts.month, ts.day);
-            Widget? header;
-            if (lastDate == null || currentDate != lastDate) {
-              header = Padding(
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                child: Center(
-                  child: Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.black.withOpacity(0.06),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Text(
-                      dateHeaderFor(ts),
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Theme.of(context)
-                            .textTheme
-                            .bodySmall
-                            ?.color
-                            ?.withOpacity(.75),
-                        fontWeight: FontWeight.w600,
+        return RepaintBoundary(
+          child: ListView.builder(
+            controller: _listCtrl,
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+            itemCount: docs.length,
+            itemBuilder: (context, i) {
+              final m = docs[i].data();
+              final me = m['senderId'] == widget.currentUser.uid;
+              final ts =
+                  (m['timestamp'] as Timestamp?)?.toDate() ?? DateTime.now();
+              final type = (m['type'] ?? 'text').toString();
+              final text = (m['text'] ?? '').toString();
+
+              // Date header
+              final currentDate = DateTime(ts.year, ts.month, ts.day);
+              Widget? header;
+              if (lastDate == null || currentDate != lastDate) {
+                header = Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withOpacity(0.06),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        _dateHeaderFor(ts),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(
+                            context,
+                          ).textTheme.bodySmall?.color?.withOpacity(.75),
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
+                );
+                lastDate = currentDate;
+              }
+
+              final bubble = Align(
+                alignment: me ? Alignment.centerRight : Alignment.centerLeft,
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: MediaQuery.of(context).size.width * .78,
+                  ),
+                  child: _buildBubble(type, me, text, m),
                 ),
               );
-              lastDate = currentDate;
-            }
 
-            final bubble = Align(
-              alignment: me ? Alignment.centerRight : Alignment.centerLeft,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxWidth: MediaQuery.of(context).size.width * .78,
-                ),
-                child: GestureDetector(
-                  onLongPress: () => showBottomSheetMenu(
-                    me: me,
-                    ref: doc.reference,
-                    text: text,
-                    m: m,
-                    ts: ts,
-                  ),
-                  onSecondaryTapDown: (details) => showPointerMenu(
-                    details.globalPosition,
-                    me: me,
-                    ref: doc.reference,
-                    text: text,
-                    m: m,
-                    ts: ts,
-                  ),
-                  child: buildBubble(type, me, text, m, ts),
-                ),
-              ),
-            );
-
-            if (header != null) {
-              return Padding(
-                padding: const EdgeInsets.only(
-                    bottom: 8), // space after header+bubble
-                child: Column(
+              if (header != null) {
+                return Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [header, bubble],
-                ),
-              );
-            }
-
-            return Padding(
-              padding:
-                  const EdgeInsets.only(bottom: 8), // space after each bubble
-              child: bubble,
-            );
-          },
+                );
+              }
+              return bubble;
+            },
+          ),
         );
       },
     );
   }
-// ============================================================
-// BLOCK E: MESSAGE LIST (animated + actions) - END
-// ============================================================
 
-  // ============================================================
-// BLOCK F: COMPOSER BAR (WhatsApp-like) - START
-// ============================================================
-  Widget _buildComposerBar() {
-    final hasText = _messageCtrl.text.trim().isNotEmpty;
+  Widget _buildBubble(
+    String type,
+    bool me,
+    String text,
+    Map<String, dynamic> m,
+  ) {
+    final bg = me ? const Color(0xFF1E88E5) : const Color(0xFF2E2E2E);
+    const txtColor = Colors.white;
 
-    return SafeArea(
-      top: false,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6),
-        height: 56,
-        color: Theme.of(context).colorScheme.surface,
-        child: Row(
-          children: [
-            if (!hasText) ...[
-              IconButton(
-                tooltip: 'Camera',
-                icon: const Icon(Icons.camera_alt, size: 24),
-                onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Camera (coming soon)')),
-                  );
-                },
-              ),
-              IconButton(
-                tooltip: 'Mic',
-                icon: const Icon(Icons.mic, size: 24),
-                onPressed: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Voice message (soon)')),
-                  );
-                },
-              ),
-            ],
-            Expanded(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceVariant,
-                  borderRadius: BorderRadius.circular(24),
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: _messageCtrl,
-                        minLines: 1,
-                        maxLines: 5,
-                        textCapitalization: TextCapitalization.sentences,
-                        decoration: const InputDecoration(
-                          isDense: true,
-                          hintText: 'Type a message',
-                          border: InputBorder.none,
-                        ),
-                        onChanged: (_) => setState(() {}),
-                        onSubmitted: (v) => _sendText(v),
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: 'Emoji',
-                      icon: const Icon(Icons.emoji_emotions_outlined, size: 24),
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Emoji picker (soon)')),
-                        );
-                      },
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(width: 6),
-            IconButton(
-              tooltip: hasText ? 'Send' : 'More',
-              icon: Icon(
-                hasText ? Icons.send : Icons.add,
-                size: 24,
-                color: hasText
-                    ? Theme.of(context).colorScheme.primary
-                    : Theme.of(context).disabledColor,
-              ),
-              onPressed: hasText ? () => _sendText(_messageCtrl.text) : null,
-            ),
-          ],
+    if (type == 'gif' || type == 'sticker') {
+      final url = (m['previewUrl'] ?? m['mediaUrl'] ?? '').toString();
+      final w = (m['w'] as num?)?.toDouble() ?? 200;
+      final h = (m['h'] as num?)?.toDouble() ?? 200;
+      final maxW = MediaQuery.of(context).size.width * .66;
+      final scale = (w > 0) ? (maxW / w).clamp(0.4, 1.0) : 1.0;
+      final dw = (w * scale).toDouble();
+      final dh = (h * scale).toDouble();
+
+      return Container(
+        margin: const EdgeInsets.symmetric(vertical: 2),
+        decoration: BoxDecoration(
+          color: Colors.transparent,
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(12),
+            topRight: const Radius.circular(12),
+            bottomLeft: Radius.circular(me ? 12 : 2),
+            bottomRight: Radius.circular(me ? 2 : 12),
+          ),
         ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(12),
+            topRight: const Radius.circular(12),
+            bottomLeft: Radius.circular(me ? 12 : 2),
+            bottomRight: Radius.circular(me ? 2 : 12),
+          ),
+          child: Image.network(url, width: dw, height: dh, fit: BoxFit.cover),
+        ),
+      );
+    }
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.only(
+          topLeft: const Radius.circular(12),
+          topRight: const Radius.circular(12),
+          bottomLeft: Radius.circular(me ? 12 : 2),
+          bottomRight: Radius.circular(me ? 2 : 12),
+        ),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(color: txtColor, fontSize: 15, height: 1.22),
       ),
     );
   }
-// ============================================================
-// BLOCK F: COMPOSER BAR (WhatsApp-like) - END
-// ============================================================
 
-  // ============================================================
-  // BLOCK G: PAGE BUILD (layout & background) - START
-  // ============================================================
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: _buildAppBar(context),
-      body: Stack(
+  // ===== Rich picker (Emoji | Stickers | GIFs | Pets) =====
+
+  void _kickSearch() async {
+    final tab = _panelTabs.index; // 0: Emoji, 1: Stickers, 2: GIFs, 3: Pets
+    if (tab == 0 || tab == 3) {
+      setState(() {
+        _remoteItems = const [];
+        _loadingRemote = false;
+      });
+      return;
+    }
+
+    setState(() => _loadingRemote = true);
+    final q = _panelSearchCtrl.text.trim();
+    try {
+      List<GiphyItem> items;
+      final stickers = (tab == 1);
+      if (q.isEmpty) {
+        items = await _giphy.trending(stickers: stickers);
+      } else {
+        items = await _giphy.search(q, stickers: stickers);
+      }
+      if (!mounted) return;
+      setState(() {
+        _remoteItems = items;
+        _loadingRemote = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _remoteItems = const [];
+        _loadingRemote = false;
+      });
+    }
+  }
+
+  Widget _richPicker() {
+    if (!_showPanel) return const SizedBox.shrink();
+
+    return Material(
+      color: Theme.of(context).colorScheme.surface,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          const Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [Color(0xFF0F1420), Color(0xFF1B2230)],
+          TabBar(
+            controller: _panelTabs,
+            labelColor: Theme.of(context).colorScheme.primary,
+            tabs: const [
+              Tab(
+                icon: Icon(Icons.sentiment_satisfied_alt_outlined),
+                text: 'Emoji',
+              ),
+              Tab(icon: Icon(Icons.sticky_note_2_outlined), text: 'Stickers'),
+              Tab(icon: Icon(Icons.gif_box_outlined), text: 'GIFs'),
+              Tab(icon: Icon(Icons.pets_outlined), text: 'Pets'),
+            ],
+          ),
+          if (_panelTabs.index == 1 || _panelTabs.index == 2)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+              child: TextField(
+                controller: _panelSearchCtrl,
+                decoration: const InputDecoration(
+                  hintText: 'Search stickers or GIFs',
+                  prefixIcon: Icon(Icons.search),
+                  isDense: true,
+                  border: OutlineInputBorder(),
                 ),
               ),
             ),
+          SizedBox(
+            height: 240,
+            child: TabBarView(
+              controller: _panelTabs,
+              children: [
+                _emojiGrid(),
+                _remoteGrid(isSticker: true),
+                _remoteGrid(isSticker: false),
+                Builder(
+                  builder: (_) {
+                    if (_petsLoading) {
+                      return const Center(
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      );
+                    }
+                    if (_petsError != null) {
+                      return Center(
+                        child: Text(
+                          'Couldn’t load pets:\n$_petsError',
+                          textAlign: TextAlign.center,
+                        ),
+                      );
+                    }
+                    return _PetsGrid(
+                      urls: _petUrls,
+                      onTapSend: (url) {
+                        _sendStickerUrl(url);
+                        setState(() => _showPanel = false);
+                      },
+                    );
+                  },
+                ),
+              ],
+            ),
           ),
-          Column(
+        ],
+      ),
+    );
+  }
+
+  Widget _emojiGrid() {
+    final categories = ['All', ..._emojiBuckets.keys];
+    final all = buildEmojis(shuffle: false, limit: 300);
+    final visible = _emojiFilter == 'All'
+        ? all
+        : (_emojiBuckets[_emojiFilter] ?? const <String>[]);
+
+    return Column(
+      children: [
+        SizedBox(
+          height: 40,
+          child: ListView.separated(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            scrollDirection: Axis.horizontal,
+            itemCount: categories.length,
+            separatorBuilder: (_, __) => const SizedBox(width: 6),
+            itemBuilder: (_, i) {
+              final label = categories[i];
+              final selected = label == _emojiFilter;
+              return ChoiceChip(
+                label: Text(label),
+                selected: selected,
+                onSelected: (_) => setState(() => _emojiFilter = label),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 8),
+        Expanded(
+          child: GridView.builder(
+            padding: const EdgeInsets.all(8),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 8,
+              mainAxisSpacing: 6,
+              crossAxisSpacing: 6,
+            ),
+            itemCount: visible.length,
+            itemBuilder: (_, i) => InkWell(
+              onTap: () => _sendText(visible[i]),
+              child: Center(
+                child: Text(visible[i], style: const TextStyle(fontSize: 22)),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _remoteGrid({required bool isSticker}) {
+    if (_loadingRemote) {
+      return const Center(child: CircularProgressIndicator(strokeWidth: 2));
+    }
+    if (_remoteItems.isEmpty) {
+      return const Center(child: Text('Nothing here yet'));
+    }
+    return GridView.builder(
+      padding: const EdgeInsets.all(8),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 4,
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 8,
+        childAspectRatio: .85,
+      ),
+      itemCount: _remoteItems.length,
+      itemBuilder: (_, i) {
+        final it = _remoteItems[i];
+        final preview = it.previewUrl.isNotEmpty ? it.previewUrl : it.url;
+        return InkWell(
+          onTap: () => _sendMedia(it),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Image.network(preview, fit: BoxFit.cover),
+          ),
+        );
+      },
+    );
+  }
+
+  // ===== Background Switcher =====
+  void _openBackgroundSheet() {
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: false,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        return DefaultTabController(
+          length: 2,
+          child: SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const TabBar(
+                    tabs: [
+                      Tab(
+                        icon: Icon(Icons.wallpaper_outlined),
+                        text: 'Wallpapers',
+                      ),
+                      Tab(icon: Icon(Icons.gif_box_outlined), text: 'GIFs'),
+                    ],
+                  ),
+                  SizedBox(
+                    height: 360,
+                    child: TabBarView(
+                      children: [
+                        _wallpapersTab(ctx),
+                        _BgGifsTab(
+                          giphy: _giphy,
+                          localGifUrls: _localGifUrls,
+                          onPick: (url) {
+                            _applyBackground(url);
+                            Navigator.pop(ctx);
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _wallpapersTab(BuildContext sheetCtx) {
+    const colorSwatches = <String>[
+      'color:#121212',
+      'color:#1E1E1E',
+      'color:#2E2E2E',
+      'color:#0D47A1',
+      'color:#1B5E20',
+      'color:#4A148C',
+      'color:#880E4F',
+      'color:#263238',
+      'color:#3E2723',
+    ];
+
+    Widget colorTile(String raw) {
+      final c = _parseBgColor(raw) ?? Colors.black;
+      final selected = (_bgRaw ?? '').toLowerCase() == raw.toLowerCase();
+      return InkWell(
+        onTap: () {
+          setState(() {
+            _bgRaw = raw;
+            _bgBlur = 0.0;
+          });
+          Navigator.pop(sheetCtx);
+        },
+        child: Container(
+          decoration: BoxDecoration(
+            color: c,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: selected ? Colors.white : Colors.transparent,
+              width: 2,
+            ),
+          ),
+        ),
+      );
+    }
+
+    Future<void> promptUrl() async {
+      final ctrl = TextEditingController(text: '');
+      final res = await showDialog<String>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Set background'),
+          content: TextField(
+            controller: ctrl,
+            decoration: const InputDecoration(
+              hintText: 'assets/bg.jpg · https://… · storage/path.png',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, ctrl.text.trim()),
+              child: const Text('Apply'),
+            ),
+          ],
+        ),
+      );
+      if (res != null && res.isNotEmpty) {
+        _applyBackground(res);
+      }
+    }
+
+    return SingleChildScrollView(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Quick picks',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 90,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: _presetWallpapers.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 10),
+              itemBuilder: (_, i) {
+                final raw = _presetWallpapers[i];
+                final img = _bgImageProviderFrom(raw);
+                return AspectRatio(
+                  aspectRatio: 16 / 9,
+                  child: InkWell(
+                    onTap: () {
+                      _applyBackground(raw);
+                      Navigator.pop(sheetCtx);
+                    },
+                    borderRadius: BorderRadius.circular(12),
+                    child: Ink(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        image: img != null
+                            ? DecorationImage(image: img, fit: BoxFit.cover)
+                            : null,
+                        color: Colors.black26,
+                      ),
+                      child: Align(
+                        alignment: Alignment.bottomLeft,
+                        child: Container(
+                          margin: const EdgeInsets.all(6),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.35),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            raw
+                                .split('/')
+                                .last
+                                .replaceAll('_', ' ')
+                                .split('.')
+                                .first,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Colors.white,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 16),
+          const Text('Colors', style: TextStyle(fontWeight: FontWeight.w700)),
+          const SizedBox(height: 10),
+          SizedBox(
+            height: 84,
+            child: GridView.builder(
+              scrollDirection: Axis.horizontal,
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                crossAxisSpacing: 10,
+                mainAxisSpacing: 10,
+                childAspectRatio: 1,
+              ),
+              itemCount: colorSwatches.length,
+              itemBuilder: (_, i) => colorTile(colorSwatches[i]),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
             children: [
-              Expanded(child: _buildMessageList()),
-              _buildComposerBar(),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    if (_petUrls.isNotEmpty) {
+                      _petUrls.shuffle();
+                      _applyBackground(_petUrls.first);
+                      Navigator.pop(sheetCtx);
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Pets are still loading')),
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.pets_outlined),
+                  label: const Text('Use a pet'),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: promptUrl,
+                  icon: const Icon(Icons.link),
+                  label: const Text('From URL / path'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            'Dim background',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              ChoiceChip(
+                label: const Text('Light'),
+                selected: _bgDim <= 0.15,
+                onSelected: (_) => setState(() => _bgDim = 0.10),
+              ),
+              const SizedBox(width: 8),
+              ChoiceChip(
+                label: const Text('Medium'),
+                selected: _bgDim > 0.15 && _bgDim < 0.35,
+                onSelected: (_) => setState(() => _bgDim = 0.25),
+              ),
+              const SizedBox(width: 8),
+              ChoiceChip(
+                label: const Text('Dark'),
+                selected: _bgDim >= 0.35,
+                onSelected: (_) => setState(() => _bgDim = 0.45),
+              ),
+              const Spacer(),
+              TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _bgRaw = null;
+                    _bgDim = 0.15;
+                    _bgBlur = 0.0;
+                  });
+                  Navigator.pop(sheetCtx);
+                },
+                icon: const Icon(Icons.cancel_outlined),
+                label: const Text('Reset'),
+              ),
             ],
           ),
         ],
@@ -902,14 +1343,286 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  // ============================================================
-  // BLOCK G: PAGE BUILD (layout & background) - END
-  // ============================================================
+  // ===== Composer + Build =====
+  Widget _buildComposer() {
+    final hasText = _textCtrl.text.trim().isNotEmpty;
+
+    return SafeArea(
+      top: false,
+      child: Material(
+        color: Theme.of(context).colorScheme.surface,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _richPicker(),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(6, 6, 6, 6),
+              child: Row(
+                children: [
+                  IconButton(
+                    tooltip: 'Attach',
+                    icon: const Icon(Icons.add_circle_outline),
+                    onPressed: _openAttachmentSheet,
+                  ),
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.surfaceVariant,
+                        borderRadius: BorderRadius.circular(24),
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: _textCtrl,
+                              focusNode: _focus,
+                              minLines: 1,
+                              maxLines: 5,
+                              textCapitalization: TextCapitalization.sentences,
+                              decoration: const InputDecoration(
+                                isDense: true,
+                                hintText: 'Message',
+                                border: InputBorder.none,
+                              ),
+                              onChanged: (_) => setState(() {}),
+                              onSubmitted: (v) => _sendText(v),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: 'Emoji · Stickers · GIFs · Pets',
+                            icon: const Icon(Icons.emoji_emotions_outlined),
+                            onPressed: () {
+                              FocusScope.of(context).unfocus();
+                              setState(() => _showPanel = !_showPanel);
+                              if (_showPanel) _kickSearch();
+                            },
+                          ),
+                          IconButton(
+                            tooltip: 'Camera',
+                            icon: const Icon(Icons.camera_alt_outlined),
+                            onPressed: () {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(content: Text('Camera (todo)')),
+                              );
+                            },
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  SizedBox(
+                    width: 44,
+                    height: 44,
+                    child: ElevatedButton(
+                      onPressed:
+                          hasText ? () => _sendText(_textCtrl.text) : () {},
+                      style: ElevatedButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        shape: const CircleBorder(),
+                      ),
+                      child: Icon(
+                        hasText ? Icons.send : Icons.mic_none_outlined,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _openAttachmentSheet() {
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) {
+        Widget coloredTile({
+          required IconData icon,
+          required String label,
+          required List<Color> gradient,
+          required VoidCallback onTap,
+        }) {
+          return InkWell(
+            onTap: () {
+              Navigator.pop(ctx);
+              onTap();
+            },
+            borderRadius: BorderRadius.circular(14),
+            child: Ink(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                color: Theme.of(context).colorScheme.surfaceVariant,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.08),
+                    blurRadius: 12,
+                    offset: const Offset(0, 6),
+                  ),
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 56,
+                    height: 56,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      gradient: LinearGradient(colors: gradient),
+                    ),
+                    child: Icon(icon, color: Colors.white),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    label,
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: GridView(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 4,
+                mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                childAspectRatio: .8,
+              ),
+              children: [
+                coloredTile(
+                  icon: Icons.photo_outlined,
+                  label: 'Photos',
+                  gradient: const [Color(0xFF2196F3), Color(0xFF64B5F6)],
+                  onTap: () => _toast('Photos (todo)'),
+                ),
+                coloredTile(
+                  icon: Icons.camera_alt_outlined,
+                  label: 'Camera',
+                  gradient: const [Color(0xFF7C4DFF), Color(0xFFB39DDB)],
+                  onTap: () => _toast('Camera (todo)'),
+                ),
+                coloredTile(
+                  icon: Icons.place_outlined,
+                  label: 'Location',
+                  gradient: const [Color(0xFF2E7D32), Color(0xFF66BB6A)],
+                  onTap: () => _toast('Location (todo)'),
+                ),
+                coloredTile(
+                  icon: Icons.person_outline,
+                  label: 'Contact',
+                  gradient: const [Color(0xFFFF9800), Color(0xFFFFB74D)],
+                  onTap: () => _toast('Contact (todo)'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _toast(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bgColor = _parseBgColor(_bgRaw);
+    final bgImage = _bgImageProviderFrom(_bgRaw);
+
+    return Scaffold(
+      appBar: _buildAppBar(context),
+      body: Stack(
+        children: [
+          Positioned.fill(
+            child: bgColor != null
+                ? Container(color: bgColor)
+                : (bgImage != null
+                    ? DecoratedBox(
+                        decoration: BoxDecoration(
+                          image: DecorationImage(
+                            image: bgImage,
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                      )
+                    : const DecoratedBox(
+                        decoration: BoxDecoration(
+                          gradient: LinearGradient(
+                            begin: Alignment.topLeft,
+                            end: Alignment.bottomRight,
+                            colors: [Color(0xFF0F1420), Color(0xFF1B2230)],
+                          ),
+                        ),
+                      )),
+          ),
+          if (_bgBlur > 0)
+            Positioned.fill(
+              child: IgnorePointer(
+                child: ImageFiltered(
+                  imageFilter: ImageFilter.blur(
+                    sigmaX: _bgBlur,
+                    sigmaY: _bgBlur,
+                  ),
+                  child: Container(color: Colors.transparent),
+                ),
+              ),
+            ),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: Container(color: Colors.black.withOpacity(_bgDim)),
+            ),
+          ),
+          Column(
+            children: [
+              Expanded(child: _buildMessageList()),
+              _buildComposer(),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
 
-// ============================================================
-// BLOCK H: SMALL SHARED WIDGETS - START
-// ============================================================
+/* ===== Small unified top actions ===== */
+class _TopAction extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  const _TopAction({required this.icon, required this.tooltip});
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      icon: Icon(icon),
+      onPressed: () {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$tooltip (coming soon)')));
+      },
+    );
+  }
+}
+
 class _OnlineDot extends StatelessWidget {
   const _OnlineDot();
   @override
@@ -925,24 +1638,244 @@ class _OnlineDot extends StatelessWidget {
   }
 }
 
-class _FeaturePlaceholder extends StatelessWidget {
-  final String title;
-  const _FeaturePlaceholder({Key? key, required this.title}) : super(key: key);
+/* ===== Pets grid ===== */
+class _PetsGrid extends StatelessWidget {
+  final List<String> urls;
+  final ValueChanged<String> onTapSend;
+  const _PetsGrid({required this.urls, required this.onTapSend});
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text(title)),
-      body: Center(
-        child: Text(
-          '$title\n(coming soon)',
-          textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.titleLarge,
+    if (urls.isEmpty) {
+      return const Center(child: Text('Your AI Pet pack will appear here.'));
+    }
+    const spacing = 6.0;
+    final cols = _colsForWidth(MediaQuery.of(context).size.width);
+    return GridView.builder(
+      padding: const EdgeInsets.only(bottom: 8),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: cols,
+        crossAxisSpacing: spacing,
+        mainAxisSpacing: spacing,
+        childAspectRatio: 1,
+      ),
+      itemCount: urls.length,
+      itemBuilder: (_, i) {
+        final url = urls[i];
+        return GestureDetector(
+          onTap: () => onTapSend(url),
+          onLongPress: () => _preview(context, url),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Image.network(url, fit: BoxFit.cover),
+          ),
+        );
+      },
+    );
+  }
+
+  int _colsForWidth(double w) {
+    if (w >= 900) return 8;
+    if (w >= 560) return 6;
+    return 5;
+  }
+
+  void _preview(BuildContext context, String url) {
+    showDialog(
+      context: context,
+      barrierDismissible: true,
+      builder: (_) => Dialog(
+        insetPadding: const EdgeInsets.all(24),
+        backgroundColor: Colors.transparent,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(14),
+          child: Image.network(url, fit: BoxFit.contain),
         ),
       ),
     );
   }
 }
 
-// ============================================================
-// BLOCK H: SMALL SHARED WIDGETS - END
-// ============================================================
+/* ===== Isolated GIFs tab for the wallpaper sheet ===== */
+class _BgGifsTab extends StatefulWidget {
+  final GiphyService giphy;
+  final List<String> localGifUrls;
+  final ValueChanged<String> onPick;
+
+  const _BgGifsTab({
+    Key? key,
+    required this.giphy,
+    required this.localGifUrls,
+    required this.onPick,
+  }) : super(key: key);
+
+  @override
+  State<_BgGifsTab> createState() => _BgGifsTabState();
+}
+
+class _BgGifsTabState extends State<_BgGifsTab> {
+  final _searchCtrl = TextEditingController();
+  Timer? _debounce;
+  bool _loading = true;
+  List<GiphyItem> _items = const [];
+  int _reqToken = 0; // last-wins
+
+  bool _didInitialLoad = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTrendingOnce();
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  void _loadTrendingOnce() {
+    if (_didInitialLoad) return;
+    _didInitialLoad = true;
+    _fetch(() => widget.giphy.trending(stickers: false));
+  }
+
+  void _onSearchChanged(String v) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 500), () {
+      final q = v.trim();
+      if (q.isEmpty) {
+        _fetch(() => widget.giphy.trending(stickers: false));
+      } else {
+        _fetch(() => widget.giphy.search(q, stickers: false));
+      }
+    });
+  }
+
+  void _fetch(Future<List<GiphyItem>> Function() call) async {
+    final token = ++_reqToken;
+    setState(() => _loading = true);
+    try {
+      final res = await call();
+      if (!mounted || token != _reqToken) return;
+      setState(() {
+        _items = res;
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted || token != _reqToken) return;
+      setState(() {
+        _items = const [];
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final useLocal = !_loading && _items.isEmpty;
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(0, 12, 0, 8),
+          child: TextField(
+            controller: _searchCtrl,
+            decoration: const InputDecoration(
+              hintText: 'Search GIFs (e.g., aurora, city bokeh)',
+              prefixIcon: Icon(Icons.search),
+              isDense: true,
+              border: OutlineInputBorder(),
+            ),
+            onChanged: _onSearchChanged,
+          ),
+        ),
+        Expanded(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+              : (useLocal
+                  ? _gridFromUrls(widget.localGifUrls)
+                  : _gridFromGiphy(_items)),
+        ),
+      ],
+    );
+  }
+
+  Widget _gridFromGiphy(List<GiphyItem> items) {
+    return GridView.builder(
+      padding: const EdgeInsets.all(8),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 8,
+        childAspectRatio: .9,
+      ),
+      itemCount: items.length,
+      itemBuilder: (_, i) {
+        final it = items[i];
+        final preview = it.previewUrl.isNotEmpty ? it.previewUrl : it.url;
+        return InkWell(
+          onTap: () => widget.onPick(it.url),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Image.network(
+              preview,
+              fit: BoxFit.cover,
+              loadingBuilder: (c, ch, prog) => prog == null
+                  ? ch
+                  : const Center(
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+              errorBuilder: (c, e, s) => _errorTile(),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _gridFromUrls(List<String> urls) {
+    for (final u in urls) {
+      debugPrint('[BG GIF url] $u');
+    }
+    if (urls.isEmpty) {
+      return const Center(child: Text('No GIFs available'));
+    }
+    return GridView.builder(
+      padding: const EdgeInsets.all(8),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 8,
+        childAspectRatio: .9,
+      ),
+      itemCount: urls.length,
+      itemBuilder: (_, i) {
+        final url = urls[i];
+        return InkWell(
+          onTap: () => widget.onPick(url),
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(10),
+            child: Image.network(
+              url,
+              fit: BoxFit.cover,
+              loadingBuilder: (c, ch, prog) => prog == null
+                  ? ch
+                  : const Center(
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+              errorBuilder: (c, e, s) => _errorTile(),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _errorTile() => Container(
+        color: Colors.black26,
+        alignment: Alignment.center,
+        child: const Icon(Icons.broken_image_outlined),
+      );
+}
