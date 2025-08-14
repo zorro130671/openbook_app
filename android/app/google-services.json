@@ -1,0 +1,46 @@
+{
+  "project_info": {
+    "project_number": "735348547978",
+    "project_id": "open-book-16zt1k",
+    "storage_bucket": "open-book-16zt1k.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:735348547978:android:13ba181ffe97ff51f6a873",
+        "android_client_info": {
+          "package_name": "com.example.openbook_app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "735348547978-shn9k06uiq6hu97dlgi3636phouglj0j.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAtOXOHJ4m-b7T6NA93re9qCoe2daCAZhs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "735348547978-shn9k06uiq6hu97dlgi3636phouglj0j.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "735348547978-n2t49kp1hpmd84tqjq2gke1rp6vpr8us.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.openbookApp"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

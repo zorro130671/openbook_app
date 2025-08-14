@@ -1,0 +1,7 @@
+{
+  "projects": { "default": "open-book-16zt1k" },
+  "firestore": {
+    "indexes": "firestore.indexes.json",
+    "rules": "firestore.rules"
+  }
+}

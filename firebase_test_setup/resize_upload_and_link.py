@@ -1,0 +1,125 @@
+import os
+from PIL import Image
+import firebase_admin
+from firebase_admin import credentials, storage, firestore
+
+# ---------- EDIT THESE TWO ----------
+SERVICE_ACCOUNT_PATH = os.path.expanduser(
+    "~/openbook_app/firebase_test_setup/serviceAccountKey.json"
+)
+# If your folder is "avatars 20" with a space, keep the space:
+LOCAL_AVATARS_ROOT = os.path.expanduser(
+    "~/Downloads/avatars20"   # contains subfolders: male/, female/
+)
+# ------------------------------------
+BUCKET_NAME = "open-book-16zt1k.firebasestorage.app"
+TARGET_SIZE = (512, 512)
+ALLOWED_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+
+# Fix common first-name mismatches (filename vs Firestore displayName)
+FIRST_NAME_ALIASES = {
+    "isabelle": "isabella",
+}
+
+def first_name_from_filename(fname: str) -> str:
+    """
+    Expect filenames like: emma_carter_f.png, liam_walker_m.png
+    We take the text before the first underscore as first name.
+    """
+    base = os.path.splitext(os.path.basename(fname))[0]
+    parts = base.split("_")
+    if not parts:
+        return ""
+    name = parts[0].lower().strip()
+    return FIRST_NAME_ALIASES.get(name, name)
+
+def resize_to_png(src_path: str, dst_path: str, size=(512, 512)):
+    img = Image.open(src_path).convert("RGB")
+    img = img.resize(size, Image.Resampling.LANCZOS)
+    img.save(dst_path, format="PNG", optimize=True)
+
+def main():
+    # Init Firebase Admin
+    cred = credentials.Certificate(SERVICE_ACCOUNT_PATH)
+    firebase_admin.initialize_app(cred, {"storageBucket": BUCKET_NAME})
+    bucket = storage.bucket()
+    db = firestore.client()
+
+    # Build lookup maps of users → DocumentReference (NOT snapshots)
+    users_ref = db.collection("users")
+    docs = list(users_ref.stream())
+
+    by_email = {}
+    by_first = {}
+    for snap in docs:
+        data = snap.to_dict() or {}
+        ref = snap.reference   # <-- DocumentReference
+        email = (data.get("email") or "").lower().strip()
+        display = (data.get("displayName") or data.get("name") or "").strip()
+        first = display.split(" ")[0].lower() if display else ""
+        if email:
+            by_email[email] = ref
+        if first:
+            by_first[first] = ref
+
+    # Prepare temp folder
+    tmp_dir = os.path.join(os.path.dirname(SERVICE_ACCOUNT_PATH), "tmp_resized")
+    os.makedirs(tmp_dir, exist_ok=True)
+
+    total_uploaded = 0
+    total_linked = 0
+    unmatched = []
+
+    for gender_folder in ("male", "female"):
+        local_dir = os.path.join(LOCAL_AVATARS_ROOT, gender_folder)
+        if not os.path.isdir(local_dir):
+            print(f"⚠️  Skipping missing folder: {local_dir}")
+            continue
+
+        for fname in os.listdir(local_dir):
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in ALLOWED_EXTS:
+                continue
+
+            src = os.path.join(local_dir, fname)
+            first = first_name_from_filename(fname)
+            if not first:
+                unmatched.append(fname)
+                continue
+
+            candidate_email = f"{first}@test.com"
+            doc_ref = by_email.get(candidate_email) or by_first.get(first)
+            if not doc_ref:
+                unmatched.append(fname)
+                continue
+
+            # Resize
+            resized_name = os.path.splitext(fname)[0] + ".png"
+            tmp_path = os.path.join(tmp_dir, resized_name)
+            resize_to_png(src, tmp_path, TARGET_SIZE)
+
+            # Upload to Storage
+            storage_path = f"avatars/{gender_folder}/{resized_name}"
+            blob = bucket.blob(storage_path)
+            blob.upload_from_filename(tmp_path)
+            total_uploaded += 1
+
+            # Update Firestore (DocumentReference.update ✅)
+            doc_ref.update({
+                "avatarPath": storage_path,
+                "updatedAt": firestore.SERVER_TIMESTAMP
+            })
+            total_linked += 1
+            print(f"✅ {fname} → {storage_path} → linked to {doc_ref.id}")
+
+    print("\n🎯 Done.")
+    print(f"   Uploaded files: {total_uploaded}")
+    print(f"   Linked users:   {total_linked}")
+    if unmatched:
+        print("   ⚠️ Unmatched filenames (no user found):")
+        for u in unmatched:
+            print(f"     - {u}")
+
+if __name__ == "__main__":
+    main()
+

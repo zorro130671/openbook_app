@@ -1,0 +1,45 @@
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+use_modular_headers!
+
+project 'Runner', { 'Debug' => :debug, 'Profile' => :release, 'Release' => :release }
+
+def flutter_root
+  generated_xcode_build_settings_path = File.expand_path(File.join('..','Flutter','Generated.xcconfig'), __FILE__)
+  raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get is executed first." unless File.exist?(generated_xcode_build_settings_path)
+  File.foreach(generated_xcode_build_settings_path) do |line|
+    m = line.match(/FLUTTER_ROOT=(.*)/)
+    return m[1].strip if m
+  end
+  raise "FLUTTER_ROOT not found in Generated.xcconfig."
+end
+
+require File.expand_path(File.join(flutter_root,'packages','flutter_tools','bin','podhelper.rb'))
+flutter_ios_podfile_setup
+
+target 'Runner' do
+  platform :ios, '13.0'
+  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+end
+
+# DO NOT call flutter_additional_ios_build_settings here.
+
+  end
+end
+
+post_install do |installer|
+  installer.pods_project.targets.each do |t|
+    t.build_configurations.each do |config|
+      config.build_settings["IPHONEOS_DEPLOYMENT_TARGET"] = "13.0"
+      config.build_settings["EXCLUDED_ARCHS[sdk=iphonesimulator*]"] = "arm64"
+      config.build_settings["CLANG_CXX_LANGUAGE_STANDARD"] = "gnu++17"
+      config.build_settings["CLANG_CXX_LIBRARY"] = "libc++"
+      cur = config.build_settings["FRAMEWORK_SEARCH_PATHS"] || "$(inherited)"
+      add1 = "${PODS_CONFIGURATION_BUILD_DIR}/Flutter"
+      add2 = "${PODS_ROOT}/../Flutter/engine"
+      vals = cur.to_s.split(" ")
+      vals << add1 unless vals.include?(add1)
+      vals << add2 unless vals.include?(add2)
+      config.build_settings["FRAMEWORK_SEARCH_PATHS"] = vals.join(" ")
+    end
+  end
+end

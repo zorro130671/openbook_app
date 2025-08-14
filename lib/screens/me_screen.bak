@@ -1,0 +1,356 @@
+import 'dart:typed_data';
+import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:file_picker/file_picker.dart';
+
+class MeScreen extends StatefulWidget {
+  final String uid;
+  final String? displayName;
+  final String? avatarUrl;
+
+  const MeScreen({
+    Key? key,
+    required this.uid,
+    this.displayName,
+    this.avatarUrl,
+  }) : super(key: key);
+
+  @override
+  State<MeScreen> createState() => _MeScreenState();
+}
+
+class _MeScreenState extends State<MeScreen> {
+  String? _avatarUrl;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _avatarUrl = widget.avatarUrl;
+  }
+
+  ImageProvider<Object>? _img(String? a) {
+    if (a == null || a.isEmpty) return null;
+    return a.startsWith('assets/') ? AssetImage(a) : NetworkImage(a);
+  }
+
+  Future<void> _changeAvatar() async {
+    try {
+      setState(() => _busy = true);
+
+      final res = await FilePicker.platform.pickFiles(
+        type: FileType.image,
+        withData: true,
+      );
+      if (res == null || res.files.isEmpty) {
+        setState(() => _busy = false);
+        return;
+      }
+
+      final file = res.files.first;
+      final Uint8List? bytes = file.bytes;
+      if (bytes == null) {
+        setState(() => _busy = false);
+        return;
+      }
+
+      final ext = (file.extension ?? 'jpg').toLowerCase();
+      final path = 'avatars/${widget.uid}.$ext';
+      final ref = FirebaseStorage.instance.ref().child(path);
+      await ref.putData(bytes, SettableMetadata(contentType: 'image/$ext'));
+      final url = await ref.getDownloadURL();
+
+      final cu = FirebaseAuth.instance.currentUser;
+      if (cu != null && cu.uid == widget.uid) {
+        await cu.updatePhotoURL(url);
+      }
+
+      await FirebaseFirestore.instance.collection('users').doc(widget.uid).set({
+        'uid': widget.uid,
+        'displayName': widget.displayName ?? '',
+        'avatarUrl': url,
+        'avatarPath': path,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+
+      if (!mounted) return;
+      setState(() {
+        _avatarUrl = url;
+        _busy = false;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Avatar updated')));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _busy = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Avatar update failed: $e')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final name = (widget.displayName?.trim().isNotEmpty == true)
+        ? widget.displayName!
+        : 'You';
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Me')),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          // Header
+          Card(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  // Avatar + edit badge
+                  Stack(
+                    alignment: Alignment.bottomRight,
+                    children: [
+                      GestureDetector(
+                        onTap: _busy ? null : _changeAvatar,
+                        child: CircleAvatar(
+                          radius: 40, // smaller avatar
+                          backgroundColor: Colors.grey[300],
+                          backgroundImage:
+                              _img(_avatarUrl) ??
+                              const AssetImage(
+                                'assets/images/avatars/placeholder.png',
+                              ),
+                          child: (_img(_avatarUrl) == null)
+                              ? const Icon(Icons.person, size: 32)
+                              : null,
+                        ),
+                      ),
+                      Positioned(
+                        right: 2,
+                        bottom: 2,
+                        child: Container(
+                          decoration: BoxDecoration(
+                            color: theme.colorScheme.primary,
+                            shape: BoxShape.circle,
+                            border: Border.all(color: Colors.white, width: 2),
+                          ),
+                          padding: const EdgeInsets.all(3),
+                          child: Icon(
+                            _busy ? Icons.hourglass_empty : Icons.edit,
+                            size: 12,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(width: 12),
+
+                  // Name + status
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          name,
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          'Status: Available',
+                          style: theme.textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Bigger QR icon button
+                  IconButton(
+                    tooltip: 'My QR',
+                    iconSize: 36,
+                    icon: const Icon(Icons.qr_code_2),
+                    onPressed: () => showModalBottomSheet(
+                      context: context,
+                      showDragHandle: true,
+                      shape: const RoundedRectangleBorder(
+                        borderRadius: BorderRadius.vertical(
+                          top: Radius.circular(16),
+                        ),
+                      ),
+                      builder: (_) =>
+                          _MyQRSheet(uid: widget.uid, displayName: name),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          // Quick actions
+          Row(
+            children: const [
+              _QuickAction(icon: Icons.auto_awesome, label: 'Stories & Posts'),
+              SizedBox(width: 8),
+              _QuickAction(icon: Icons.chat_bubble_outline, label: 'My Chats'),
+              SizedBox(width: 8),
+              _QuickAction(icon: Icons.folder_open, label: 'My Files'),
+            ],
+          ),
+
+          const SizedBox(height: 16),
+
+          // Features
+          const _SectionHeader('Features'),
+          const _NavTile(
+            icon: Icons.account_balance_wallet_outlined,
+            label: 'Wallet',
+          ),
+          const _NavTile(icon: Icons.bookmark_border, label: 'Favorites'),
+          const _NavTile(icon: Icons.campaign_outlined, label: 'Channels'),
+          const _NavTile(icon: Icons.qr_code_scanner, label: 'Scan'),
+          const _NavTile(icon: Icons.map_outlined, label: 'Nearby'),
+          const _NavTile(icon: Icons.devices_other, label: 'Devices'),
+
+          const SizedBox(height: 16),
+
+          // AI & Language
+          const _SectionHeader('AI & Language'),
+          SwitchListTile(
+            title: const Text('Auto-translate'),
+            value: false,
+            onChanged: (_) {},
+            secondary: const Icon(Icons.translate),
+          ),
+          ListTile(
+            leading: const Icon(Icons.language),
+            title: const Text('Target language'),
+            subtitle: const Text('English (EN)'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () {},
+          ),
+
+          const SizedBox(height: 16),
+
+          // System
+          const _SectionHeader('System'),
+          const _NavTile(icon: Icons.settings_outlined, label: 'Settings'),
+
+          const SizedBox(height: 24),
+
+          // Footer
+          Center(
+            child: TextButton.icon(
+              onPressed: () {},
+              icon: const Icon(Icons.logout),
+              label: const Text('Sign out'),
+            ),
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+}
+
+class _QuickAction extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _QuickAction({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Expanded(
+      child: ElevatedButton(
+        style: ElevatedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+        onPressed: () {},
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon),
+            const SizedBox(height: 6),
+            Text(label, textAlign: TextAlign.center),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _NavTile extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _NavTile({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ListTile(
+        leading: Icon(icon),
+        title: Text(label),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () {}, // wire later
+      ),
+    );
+  }
+}
+
+class _SectionHeader extends StatelessWidget {
+  final String text;
+  const _SectionHeader(this.text);
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Text(text, style: const TextStyle(fontWeight: FontWeight.w700)),
+    );
+  }
+}
+
+class _MyQRSheet extends StatelessWidget {
+  final String uid;
+  final String displayName;
+  const _MyQRSheet({required this.uid, required this.displayName});
+
+  @override
+  Widget build(BuildContext context) {
+    // Big QR placeholder (swap to qr_flutter later if needed)
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            'Your QR Code',
+            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 18),
+          ),
+          const SizedBox(height: 16),
+          const Icon(Icons.qr_code_2, size: 240),
+          const SizedBox(height: 12),
+          Text('UID: $uid'),
+          Text('Name: $displayName'),
+          const SizedBox(height: 12),
+        ],
+      ),
+    );
+  }
+}
