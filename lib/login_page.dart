@@ -1,8 +1,3 @@
-// lib/login_page.dart
-//
-// Requires these deps in pubspec.yaml:
-// firebase_core, firebase_auth, google_sign_in, shared_preferences, flutter_svg, google_fonts
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -12,17 +7,18 @@ import 'package:google_sign_in/google_sign_in.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'home_screen.dart';
+import 'sign_up_page.dart'; // Import the SignUpPage
 
 final FirebaseAuth auth = FirebaseAuth.instance;
 
 class LoginPage extends StatefulWidget {
   const LoginPage({Key? key}) : super(key: key);
+
   @override
   State<LoginPage> createState() => _LoginPageState();
 }
 
 class _LoginPageState extends State<LoginPage> {
-  // --- Form + state
   final _formKey = GlobalKey<FormState>();
   final _emailCtrl = TextEditingController();
   final _pwCtrl = TextEditingController();
@@ -64,7 +60,7 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
-  // --- Actions
+  // --- Actions for Login
   Future<void> _loginEmail() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _busy = true);
@@ -75,17 +71,14 @@ class _LoginPageState extends State<LoginPage> {
       );
       await _persistRememberMe(_emailCtrl.text.trim());
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('✅ Login successful')));
-      Navigator.of(
-        context,
-      ).pushReplacement(MaterialPageRoute(builder: (_) => const HomeScreen()));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('✅ Login successful')));
+      Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const HomeScreen()));
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('❌ ${e.message ?? "Login failed"}')),
-      );
+          SnackBar(content: Text('❌ ${e.message ?? "Login failed"}')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -108,17 +101,14 @@ class _LoginPageState extends State<LoginPage> {
         await auth.signInWithCredential(cred);
       }
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('✅ Signed in with Google')));
-      Navigator.of(
-        context,
-      ).pushReplacement(MaterialPageRoute(builder: (_) => const HomeScreen()));
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('✅ Signed in with Google')));
+      Navigator.of(context).pushReplacement(
+          MaterialPageRoute(builder: (_) => const HomeScreen()));
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('❌ Google Sign-In failed: $e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('❌ Google Sign-In failed: $e')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -146,7 +136,7 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
-  // --- UI
+  // --- UI (LoginPage Layout)
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
@@ -158,10 +148,8 @@ class _LoginPageState extends State<LoginPage> {
           children: [
             Center(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 16,
-                ),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxWidth: 420),
                   child: Form(
@@ -169,37 +157,14 @@ class _LoginPageState extends State<LoginPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        // Debug-only shortcut to Home
-                        if (kDebugMode)
-                          Align(
-                            alignment: Alignment.topRight,
-                            child: IconButton(
-                              tooltip: 'Skip to Home',
-                              icon: const Icon(
-                                Icons.bolt_outlined,
-                                color: Colors.white54,
-                              ),
-                              onPressed: _busy
-                                  ? null
-                                  : () {
-                                      Navigator.of(context).pushReplacement(
-                                        MaterialPageRoute(
-                                          builder: (_) => const HomeScreen(),
-                                        ),
-                                      );
-                                    },
-                            ),
-                          ),
                         const SizedBox(height: 8),
-
-                        // Logo + brand
-                        _AppLogo(),
+                        _AppLogo(), // Custom logo widget
                         const SizedBox(height: 12),
                         Text(
                           'OpenBook',
                           textAlign: TextAlign.center,
                           style: GoogleFonts.poppins(
-                            fontSize: 30, // slightly smaller, tighter hierarchy
+                            fontSize: 30,
                             fontWeight: FontWeight.w700,
                             color: const Color(0xFF00CFFF),
                             height: 1.1,
@@ -207,15 +172,12 @@ class _LoginPageState extends State<LoginPage> {
                         ),
                         const SizedBox(height: 28),
 
-                        // Email
+                        // Email Field
                         TextFormField(
                           controller: _emailCtrl,
                           enabled: !_busy,
                           style: const TextStyle(color: Colors.white),
                           keyboardType: TextInputType.emailAddress,
-                          autofillHints: const [AutofillHints.email],
-                          textInputAction: TextInputAction.next,
-                          onFieldSubmitted: (_) => _pwFocus.requestFocus(),
                           decoration: _inputDecoration(
                             hint: 'Email',
                             cs: cs,
@@ -224,25 +186,21 @@ class _LoginPageState extends State<LoginPage> {
                           validator: (v) {
                             final t = (v ?? '').trim();
                             if (t.isEmpty) return 'Email is required';
-                            final ok = RegExp(
-                              r'^[^@]+@[^@]+\.[^@]+',
-                            ).hasMatch(t);
+                            final ok =
+                                RegExp(r'^[^@]+@[^@]+\.[^@]+').hasMatch(t);
                             if (!ok) return 'Enter a valid email';
                             return null;
                           },
                         ),
                         const SizedBox(height: 14),
 
-                        // Password
+                        // Password Field
                         TextFormField(
                           controller: _pwCtrl,
                           focusNode: _pwFocus,
                           enabled: !_busy,
                           style: const TextStyle(color: Colors.white),
                           obscureText: _obscure,
-                          autofillHints: const [AutofillHints.password],
-                          textInputAction: TextInputAction.done,
-                          onFieldSubmitted: (_) => _loginEmail(),
                           decoration: _inputDecoration(
                             hint: 'Password',
                             cs: cs,
@@ -257,9 +215,6 @@ class _LoginPageState extends State<LoginPage> {
                                     : Icons.visibility_off,
                                 color: Colors.white54,
                               ),
-                              tooltip: _obscure
-                                  ? 'Show password'
-                                  : 'Hide password',
                             ),
                           ),
                           validator: (v) {
@@ -269,22 +224,20 @@ class _LoginPageState extends State<LoginPage> {
                             return null;
                           },
                         ),
-
                         const SizedBox(height: 6),
+
+                        // Remember Me & Forgot Password
                         Row(
                           children: [
                             Checkbox(
                               value: _rememberMe,
                               onChanged: _busy
                                   ? null
-                                  : (v) => setState(
-                                      () => _rememberMe = v ?? false,
-                                    ),
+                                  : (v) =>
+                                      setState(() => _rememberMe = v ?? false),
                             ),
-                            const Text(
-                              'Remember me',
-                              style: TextStyle(color: Colors.white70),
-                            ),
+                            const Text('Remember me',
+                                style: TextStyle(color: Colors.white70)),
                             const Spacer(),
                             TextButton(
                               onPressed: _busy ? null : _resetPassword,
@@ -292,8 +245,9 @@ class _LoginPageState extends State<LoginPage> {
                             ),
                           ],
                         ),
-
                         const SizedBox(height: 8),
+
+                        // Login Button
                         SizedBox(
                           height: 50,
                           child: ElevatedButton(
@@ -303,25 +257,15 @@ class _LoginPageState extends State<LoginPage> {
                               foregroundColor: Colors.white,
                               elevation: 0,
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                              ),
+                                  borderRadius: BorderRadius.circular(12)),
                             ),
                             child: _busy
-                                ? const SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : const Text(
-                                    'Log in',
+                                ? const CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white)
+                                : const Text('Log in',
                                     style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w600)),
                           ),
                         ),
 
@@ -329,7 +273,7 @@ class _LoginPageState extends State<LoginPage> {
                         const _OrDivider(),
                         const SizedBox(height: 18),
 
-                        // Social
+                        // Social Media Logins
                         _SocialButton(
                           label: 'Continue with Google',
                           asset: 'assets/logos/google_logo.svg',
@@ -347,14 +291,10 @@ class _LoginPageState extends State<LoginPage> {
                           border: BorderSide(color: Colors.white24),
                           onTap: _busy
                               ? null
-                              : () =>
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                          'Facebook login coming soon…',
-                                        ),
-                                      ),
-                                    ),
+                              : () => ScaffoldMessenger.of(context)
+                                  .showSnackBar(const SnackBar(
+                                      content:
+                                          Text('Facebook login coming soon…'))),
                         ),
                         const SizedBox(height: 12),
                         _SocialButton(
@@ -365,27 +305,27 @@ class _LoginPageState extends State<LoginPage> {
                           border: BorderSide(color: Colors.white24),
                           onTap: _busy
                               ? null
-                              : () =>
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                          'Apple login coming soon…',
-                                        ),
-                                      ),
-                                    ),
+                              : () => ScaffoldMessenger.of(context)
+                                  .showSnackBar(const SnackBar(
+                                      content:
+                                          Text('Apple login coming soon…'))),
                         ),
 
                         const SizedBox(height: 22),
+                        // Sign-up Button - Navigates to SignUpPage
                         TextButton(
                           onPressed: _busy
                               ? null
                               : () {
-                                  // TODO: Navigate to your sign-up screen
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                        builder: (_) =>
+                                            SignUpPage()), // Navigate to SignUpPage
+                                  );
                                 },
-                          child: const Text(
-                            "Don't have an account? Sign up",
-                            style: TextStyle(color: Colors.white70),
-                          ),
+                          child: const Text("Don't have an account? Sign up",
+                              style: TextStyle(color: Colors.white70)),
                         ),
                       ],
                     ),
@@ -393,7 +333,6 @@ class _LoginPageState extends State<LoginPage> {
                 ),
               ),
             ),
-
             // Optional: light modal scrim while busy (prevents double taps)
             if (_busy)
               Positioned.fill(
@@ -498,20 +437,15 @@ class _SocialButton extends StatelessWidget {
         child: Row(
           children: [
             SizedBox(
-              width: 22,
-              height: 22,
-              child: SvgPicture.asset(asset, fit: BoxFit.contain),
-            ),
+                width: 22,
+                height: 22,
+                child: SvgPicture.asset(asset, fit: BoxFit.contain)),
             const SizedBox(width: 12),
             Expanded(
-              child: Text(
-                label,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
+              child: Text(label,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                      fontSize: 15, fontWeight: FontWeight.w600)),
             ),
             const SizedBox(width: 22), // visual balance
           ],
