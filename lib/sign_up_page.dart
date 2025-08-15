@@ -105,7 +105,7 @@ class _SignUpPageState extends State<SignUpPage> {
         // If email is verified, navigate to the profile page
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (_) => EditUserProfile()),
+          MaterialPageRoute(builder: (_) => const EditUserProfilePage()),
         );
       } else {
         // If email is not verified, show message
