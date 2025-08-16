@@ -1,10 +1,15 @@
+// lib/screens/me_screen.dart
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_storage/firebase_storage.dart';
 import 'package:file_picker/file_picker.dart';
-import 'my_stories_posts_screen.dart';
+
+// Navigation & services
+import 'package:go_router/go_router.dart';
+import 'package:openbook_app/services/user_service.dart';
+import 'package:openbook_app/edit_user_profile.dart';
 
 // Navigate to Stories & Posts
 import 'my_stories_posts_screen.dart';
@@ -35,15 +40,26 @@ class _MeScreenState extends State<MeScreen> {
     _avatarUrl = widget.avatarUrl;
   }
 
-  ImageProvider<Object>? _img(String? a) {
-    if (a == null || a.isEmpty) return null;
-    if (a.startsWith('assets/')) {
-      return AssetImage(a) as ImageProvider<Object>;
-    } else {
-      return NetworkImage(a) as ImageProvider<Object>;
+  // ---- Pro nav to Edit Profile (go_router with fallback) ----
+  Future<void> _openEditProfile(BuildContext context) async {
+    // Ensure user doc schema exists (non-fatal if it throws)
+    try {
+      await UserService.ensureUserDocument();
+    } catch (_) {}
+
+    if (!mounted) return;
+
+    // Prefer go_router; fall back to classic Navigator if router is off
+    try {
+      context.pushNamed('profile_edit');
+    } catch (_) {
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const EditUserProfilePage()),
+      );
     }
   }
 
+  // (Optional) Quick avatar change function (kept for future use).
   Future<void> _changeAvatar() async {
     try {
       setState(() => _busy = true);
@@ -65,7 +81,8 @@ class _MeScreenState extends State<MeScreen> {
       }
 
       final ext = (f.extension ?? 'jpg').toLowerCase();
-      final path = 'avatars/${widget.uid}.$ext';
+      final path =
+          'avatars/${widget.uid}/profile.$ext'; // ✅ matches Storage rules
       final ref = FirebaseStorage.instance.ref().child(path);
       await ref.putData(bytes, SettableMetadata(contentType: 'image/$ext'));
       final url = await ref.getDownloadURL();
@@ -79,6 +96,7 @@ class _MeScreenState extends State<MeScreen> {
         'uid': widget.uid,
         'displayName': widget.displayName ?? '',
         'avatarUrl': url,
+        'photoURL': url, // mirror key used elsewhere
         'avatarPath': path,
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true));
@@ -88,125 +106,164 @@ class _MeScreenState extends State<MeScreen> {
         _avatarUrl = url;
         _busy = false;
       });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Avatar updated')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Avatar updated')));
     } catch (e) {
       if (!mounted) return;
       setState(() => _busy = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Avatar update failed: $e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Avatar update failed: $e')));
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final name = (widget.displayName?.trim().isNotEmpty == true)
-        ? widget.displayName!
-        : 'You';
 
     return Scaffold(
       appBar: AppBar(title: const Text('Me')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // Header
-          Card(
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  // Avatar + edit badge
-                  Stack(
-                    alignment: Alignment.bottomRight,
+          // ===== Header (live from Firestore) =====
+          StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+            stream: FirebaseFirestore.instance
+                .collection('users')
+                .doc(widget.uid)
+                .snapshots(),
+            builder: (context, snapshot) {
+              final data = snapshot.data?.data();
+
+              final displayName = (data?['displayName'] as String?)?.trim();
+              final fallbackName =
+                  (widget.displayName?.trim().isNotEmpty == true)
+                      ? widget.displayName!
+                      : 'You';
+              final name = (displayName?.isNotEmpty == true)
+                  ? displayName!
+                  : ((data?['name'] as String?)?.trim().isNotEmpty == true
+                      ? (data?['name'] as String)
+                      : fallbackName);
+
+              // Prefer Firestore avatarUrl -> photoURL -> previously passed-in
+              final liveAvatar = (data?['avatarUrl'] as String?) ??
+                  (data?['photoURL'] as String?) ??
+                  _avatarUrl;
+
+              // ✅ Fix: choose a concrete ImageProvider to avoid type issues
+              ImageProvider<Object> avatarProvider;
+              if (liveAvatar != null &&
+                  liveAvatar.isNotEmpty &&
+                  liveAvatar.startsWith('http')) {
+                avatarProvider = NetworkImage(liveAvatar);
+              } else {
+                avatarProvider =
+                    const AssetImage('assets/profile_placeholder.png');
+              }
+
+              return Card(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      GestureDetector(
-                        onTap: _busy ? null : _changeAvatar,
-                        child: CircleAvatar(
-                          radius: 40, // smaller avatar
-                          backgroundColor: Colors.grey[300],
-                          backgroundImage: _img(_avatarUrl) ??
-                              const AssetImage(
-                                'assets/images/avatars/placeholder.png',
+                      // Avatar + edit badge
+                      Stack(
+                        alignment: Alignment.bottomRight,
+                        children: [
+                          // Tap avatar -> open Edit Profile
+                          GestureDetector(
+                            onTap:
+                                _busy ? null : () => _openEditProfile(context),
+                            child: CircleAvatar(
+                              radius: 40,
+                              backgroundColor: Colors.grey[300],
+                              backgroundImage: avatarProvider,
+                              child: (liveAvatar == null || liveAvatar.isEmpty)
+                                  ? const Icon(Icons.person, size: 32)
+                                  : null,
+                            ),
+                          ),
+                          // Tap badge -> same action
+                          Positioned(
+                            right: 2,
+                            bottom: 2,
+                            child: InkWell(
+                              onTap: _busy
+                                  ? null
+                                  : () => _openEditProfile(context),
+                              customBorder: const CircleBorder(),
+                              child: Container(
+                                decoration: BoxDecoration(
+                                  color: theme.colorScheme.primary,
+                                  shape: BoxShape.circle,
+                                  border:
+                                      Border.all(color: Colors.white, width: 2),
+                                ),
+                                padding: const EdgeInsets.all(3),
+                                child: Icon(
+                                  _busy ? Icons.hourglass_empty : Icons.edit,
+                                  size: 12,
+                                  color: Colors.white,
+                                ),
                               ),
-                          child: (_img(_avatarUrl) == null)
-                              ? const Icon(Icons.person, size: 32)
-                              : null,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(width: 12),
+
+                      // Name + status
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              name,
+                              style: theme.textTheme.titleMedium?.copyWith(
+                                fontWeight: FontWeight.w700,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              'Status: Available',
+                              style: theme.textTheme.bodySmall,
+                            ),
+                          ],
                         ),
                       ),
-                      Positioned(
-                        right: 2,
-                        bottom: 2,
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: theme.colorScheme.primary,
-                            shape: BoxShape.circle,
-                            border: Border.all(color: Colors.white, width: 2),
+
+                      // Bigger QR icon button
+                      IconButton(
+                        tooltip: 'My QR',
+                        iconSize: 36,
+                        icon: const Icon(Icons.qr_code_2),
+                        onPressed: () => showModalBottomSheet(
+                          context: context,
+                          showDragHandle: true,
+                          shape: const RoundedRectangleBorder(
+                            borderRadius: BorderRadius.vertical(
+                              top: Radius.circular(16),
+                            ),
                           ),
-                          padding: const EdgeInsets.all(3),
-                          child: Icon(
-                            _busy ? Icons.hourglass_empty : Icons.edit,
-                            size: 12,
-                            color: Colors.white,
-                          ),
+                          builder: (_) =>
+                              _MyQRSheet(uid: widget.uid, displayName: name),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(width: 12),
-
-                  // Name + status
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          name,
-                          style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          'Status: Available',
-                          style: theme.textTheme.bodySmall,
-                        ),
-                      ],
-                    ),
-                  ),
-
-                  // Bigger QR icon button
-                  IconButton(
-                    tooltip: 'My QR',
-                    iconSize: 36,
-                    icon: const Icon(Icons.qr_code_2),
-                    onPressed: () => showModalBottomSheet(
-                      context: context,
-                      showDragHandle: true,
-                      shape: const RoundedRectangleBorder(
-                        borderRadius: BorderRadius.vertical(
-                          top: Radius.circular(16),
-                        ),
-                      ),
-                      builder: (_) =>
-                          _MyQRSheet(uid: widget.uid, displayName: name),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+                ),
+              );
+            },
           ),
 
           const SizedBox(height: 12),
 
-          // Quick actions
+          // ===== Quick actions =====
           Row(
             children: [
               _QuickAction(
@@ -230,7 +287,7 @@ class _MeScreenState extends State<MeScreen> {
 
           const SizedBox(height: 16),
 
-          // Features
+          // ===== Features =====
           const _SectionHeader('Features'),
           const _NavTile(
             icon: Icons.account_balance_wallet_outlined,
@@ -251,7 +308,7 @@ class _MeScreenState extends State<MeScreen> {
 
           const SizedBox(height: 16),
 
-          // AI & Language
+          // ===== AI & Language =====
           const _SectionHeader('AI & Language'),
           SwitchListTile(
             title: const Text('Auto-translate'),
@@ -269,16 +326,29 @@ class _MeScreenState extends State<MeScreen> {
 
           const SizedBox(height: 16),
 
-          // System
+          // ===== System =====
           const _SectionHeader('System'),
           const _NavTile(icon: Icons.settings_outlined, label: 'Settings'),
 
           const SizedBox(height: 24),
 
-          // Footer
+          // ===== Footer =====
           Center(
             child: TextButton.icon(
-              onPressed: () {},
+              onPressed: () async {
+                try {
+                  await FirebaseAuth.instance.signOut();
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Signed out')),
+                  );
+                } catch (e) {
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Sign out failed: $e')),
+                  );
+                }
+              },
               icon: const Icon(Icons.logout),
               label: const Text('Sign out'),
             ),

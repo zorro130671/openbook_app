@@ -29,6 +29,8 @@ dependencies:
   # giphy_picker: ^0.2.2 # For Giphy sticker picker
   intl_phone_field: ^2.1.0 # You can use this package to allow selecting country code
   image_picker: ^1.1.2
+  go_router: ^14.2.1
+
 
 
 
